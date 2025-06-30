@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+
+members = ["config", "hal", "scheduler", "task_inner", "user_test", "vsched"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+authors = ["Fangliang Zhao <1491657576@qq.com>"]
+license = "GPL-3.0-or-later OR Apache-2.0 OR MulanPSL-2.0"
+homepage = "https://github.com/arceos-org/arceos"
+documentation = "https://arceos-org.github.io/arceos"
+repository = "https://github.com/arceos-org/arceos"
+keywords = ["vdso", "task scheduling"]
+categories = ["os", "no-std"]
+
+
+[workspace.dependencies]
+hal = { path = "hal" }
+scheduler = { path = "scheduler" }
+vsched = { path = "vsched" }
+config = { path = "config" }
+task_inner = { path = "task_inner" }
+user_test = { path = "user_test" }
+
+[profile.release]
+panic = "abort"
+
+[profile.dev]
+panic = "abort"

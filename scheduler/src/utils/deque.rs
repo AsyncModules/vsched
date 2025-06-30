@@ -1,0 +1,697 @@
+//! Satety:
+//!     The `pop_back` operation in the MPMC situation will cause error.
+
+use core::cell::UnsafeCell;
+use core::mem::MaybeUninit;
+use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+
+// Slot states for tracking initialization
+const SLOT_EMPTY: u8 = 0;
+const SLOT_WRITING: u8 = 1;
+const SLOT_READY: u8 = 2;
+const SLOT_READING: u8 = 3;
+
+struct Slot<T> {
+    data: UnsafeCell<MaybeUninit<T>>,
+    state: AtomicU8,
+}
+
+impl<T> Slot<T> {
+    const fn new() -> Self {
+        Self {
+            data: UnsafeCell::new(MaybeUninit::uninit()),
+            state: AtomicU8::new(SLOT_EMPTY),
+        }
+    }
+}
+
+pub struct LockFreeDeque<T, const CAPACITY: usize> {
+    buffer: [Slot<T>; CAPACITY],
+    head: AtomicUsize, // Points to the first element
+    tail: AtomicUsize, // Points to one past the last element
+}
+
+impl<T, const CAPACITY: usize> LockFreeDeque<T, CAPACITY> {
+    const EMPTY_CELL: Slot<T> = Slot::new();
+
+    /// Create a new lock-free deque with compile-time capacity
+    pub const fn new() -> Self {
+        let buffer = [Self::EMPTY_CELL; CAPACITY];
+
+        Self {
+            buffer,
+            head: AtomicUsize::new(0),
+            tail: AtomicUsize::new(0),
+        }
+    }
+
+    /// Push an item to the front of the deque
+    /// Returns Err(item) if the deque is full
+    pub fn push_front(&self, item: T) -> Result<(), T> {
+        loop {
+            let head = self.head.load(Ordering::Acquire);
+            let tail = self.tail.load(Ordering::Acquire);
+
+            // Calculate the new head position (moving backwards)
+            let new_head = if head == 0 { CAPACITY - 1 } else { head - 1 };
+
+            // Check if queue is full
+            if new_head == tail {
+                return Err(item);
+            }
+
+            // Check if the target slot is available
+            let slot = &self.buffer[new_head];
+
+            // Try to claim the slot for writing atomically
+            match slot.state.compare_exchange_weak(
+                SLOT_EMPTY,
+                SLOT_WRITING,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    // Successfully claimed slot, now try to update head
+                    match self.head.compare_exchange_weak(
+                        head,
+                        new_head,
+                        Ordering::Release,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(_) => {
+                            // Successfully reserved the slot, write the item
+                            unsafe {
+                                (*slot.data.get()).write(item);
+                            }
+
+                            // Mark slot as ready
+                            slot.state.store(SLOT_READY, Ordering::Release);
+                            return Ok(());
+                        }
+                        Err(_) => {
+                            // Failed to update head, release the slot and retry
+                            slot.state.store(SLOT_EMPTY, Ordering::Release);
+                            // Small backoff to reduce contention
+                            for _ in 0..5 {
+                                core::hint::spin_loop();
+                            }
+                            continue;
+                        }
+                    }
+                }
+                Err(current_state) => {
+                    // Slot is not empty
+                    if current_state == SLOT_WRITING {
+                        // Another thread is writing, wait a bit
+                        for _ in 0..10 {
+                            core::hint::spin_loop();
+                        }
+                    }
+                    continue;
+                }
+            }
+        }
+    }
+
+    /// Push an item to the back of the deque
+    /// Returns Err(item) if the deque is full
+    pub fn push_back(&self, item: T) -> Result<(), T> {
+        loop {
+            let head = self.head.load(Ordering::Acquire);
+            let tail = self.tail.load(Ordering::Acquire);
+
+            // Calculate the new tail position
+            let new_tail = (tail + 1) % CAPACITY;
+
+            // Check if queue is full
+            if new_tail == head {
+                return Err(item);
+            }
+
+            // Check if the target slot is available
+            let slot = &self.buffer[tail];
+
+            // Try to claim the slot for writing atomically
+            match slot.state.compare_exchange_weak(
+                SLOT_EMPTY,
+                SLOT_WRITING,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    // Successfully claimed slot, now try to update tail
+                    match self.tail.compare_exchange_weak(
+                        tail,
+                        new_tail,
+                        Ordering::Release,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(_) => {
+                            // Successfully reserved the slot, write the item
+                            unsafe {
+                                (*slot.data.get()).write(item);
+                            }
+
+                            // Mark slot as ready
+                            slot.state.store(SLOT_READY, Ordering::Release);
+                            return Ok(());
+                        }
+                        Err(_) => {
+                            // Failed to update tail, release the slot and retry
+                            slot.state.store(SLOT_EMPTY, Ordering::Release);
+                            // Small backoff to reduce contention
+                            for _ in 0..5 {
+                                core::hint::spin_loop();
+                            }
+                            continue;
+                        }
+                    }
+                }
+                Err(current_state) => {
+                    // Slot is not empty
+                    if current_state == SLOT_WRITING {
+                        // Another thread is writing, wait a bit
+                        for _ in 0..10 {
+                            core::hint::spin_loop();
+                        }
+                    }
+                    continue;
+                }
+            }
+        }
+    }
+
+    /// Pop an item from the front of the deque
+    /// Returns None if the deque is empty
+    pub fn pop_front(&self) -> Option<T> {
+        loop {
+            let head = self.head.load(Ordering::Acquire);
+            let tail = self.tail.load(Ordering::Acquire);
+
+            // Check if queue is empty
+            if head == tail {
+                return None;
+            }
+
+            // Check if the slot has data ready
+            let slot = &self.buffer[head];
+
+            // Try to claim the slot for reading
+            match slot.state.compare_exchange_weak(
+                SLOT_READY,
+                SLOT_READING,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    // Successfully claimed slot for reading
+                    let new_head = (head + 1) % CAPACITY;
+
+                    // Try to update head
+                    match self.head.compare_exchange_weak(
+                        head,
+                        new_head,
+                        Ordering::Release,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(_) => {
+                            // Successfully updated head, read the item
+                            let item = unsafe { (*slot.data.get()).assume_init_read() };
+
+                            // Mark slot as empty
+                            slot.state.store(SLOT_EMPTY, Ordering::Release);
+                            return Some(item);
+                        }
+                        Err(_) => {
+                            // Failed to update head, restore slot state and retry
+                            slot.state.store(SLOT_READY, Ordering::Release);
+                            // Small backoff to reduce contention
+                            for _ in 0..5 {
+                                core::hint::spin_loop();
+                            }
+                            continue;
+                        }
+                    }
+                }
+                Err(current_state) => {
+                    if current_state == SLOT_EMPTY {
+                        // Slot became empty, queue might be empty now
+                        return None;
+                    } else if current_state == SLOT_WRITING {
+                        // Slot is being written to, wait a bit
+                        for _ in 0..10 {
+                            core::hint::spin_loop();
+                        }
+                    }
+                    continue;
+                }
+            }
+        }
+    }
+
+    /// Pop an item from the back of the deque
+    /// Returns None if the deque is empty
+    pub fn pop_back(&self) -> Option<T> {
+        loop {
+            let head = self.head.load(Ordering::Acquire);
+            let tail = self.tail.load(Ordering::Acquire);
+
+            // Check if queue is empty
+            if head == tail {
+                return None;
+            }
+
+            // Calculate the position of the last element
+            let last_pos = if tail == 0 { CAPACITY - 1 } else { tail - 1 };
+
+            // Check if the slot has data ready
+            let slot = &self.buffer[last_pos];
+
+            // Try to claim the slot for reading
+            match slot.state.compare_exchange_weak(
+                SLOT_READY,
+                SLOT_READING,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    // Successfully claimed slot for reading
+
+                    // Try to update tail
+                    match self.tail.compare_exchange_weak(
+                        tail,
+                        last_pos,
+                        Ordering::Release,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(_) => {
+                            // Successfully updated tail, read the item
+                            let item = unsafe { (*slot.data.get()).assume_init_read() };
+
+                            // Mark slot as empty
+                            slot.state.store(SLOT_EMPTY, Ordering::Release);
+                            return Some(item);
+                        }
+                        Err(_) => {
+                            // Failed to update tail, restore slot state and retry
+                            slot.state.store(SLOT_READY, Ordering::Release);
+                            // Small backoff to reduce contention
+                            for _ in 0..5 {
+                                core::hint::spin_loop();
+                            }
+                            continue;
+                        }
+                    }
+                }
+                Err(current_state) => {
+                    if current_state == SLOT_EMPTY {
+                        // Slot became empty, queue might be empty now
+                        return None;
+                    } else if current_state == SLOT_WRITING {
+                        // Slot is being written to, wait a bit
+                        for _ in 0..10 {
+                            core::hint::spin_loop();
+                        }
+                    }
+                    continue;
+                }
+            }
+        }
+    }
+
+    /// Get the current length of the deque (approximate in concurrent scenarios)
+    pub fn len(&self) -> usize {
+        let head = self.head.load(Ordering::Acquire);
+        let tail = self.tail.load(Ordering::Acquire);
+
+        if tail >= head {
+            tail - head
+        } else {
+            CAPACITY - head + tail
+        }
+    }
+
+    /// Check if the deque is empty (approximate in concurrent scenarios)
+    pub fn is_empty(&self) -> bool {
+        self.head.load(Ordering::Acquire) == self.tail.load(Ordering::Acquire)
+    }
+
+    /// Get the capacity of the deque
+    pub const fn capacity(&self) -> usize {
+        CAPACITY
+    }
+}
+
+impl<T, const CAPACITY: usize> Drop for LockFreeDeque<T, CAPACITY> {
+    fn drop(&mut self) {
+        // Clean up any remaining items to prevent memory leaks
+        while self.pop_front().is_some() {}
+    }
+}
+
+// Safety: The deque can be sent between threads if T can be sent
+unsafe impl<T: Send, const CAPACITY: usize> Send for LockFreeDeque<T, CAPACITY> {}
+// Safety: The deque can be shared between threads if T can be sent
+unsafe impl<T: Send, const CAPACITY: usize> Sync for LockFreeDeque<T, CAPACITY> {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::sync::atomic::AtomicI32;
+    use std::{sync::Arc, thread};
+    #[test]
+    fn test_basic_operations() {
+        let deque: LockFreeDeque<i32, 5> = LockFreeDeque::new();
+
+        // Test push_back and pop_front
+        assert!(deque.push_back(1).is_ok());
+        assert!(deque.push_back(2).is_ok());
+        assert_eq!(deque.pop_front(), Some(1));
+        assert_eq!(deque.pop_front(), Some(2));
+        assert_eq!(deque.pop_front(), None);
+
+        // Test push_front and pop_back
+        assert!(deque.push_front(3).is_ok());
+        assert!(deque.push_front(4).is_ok());
+        assert_eq!(deque.pop_back(), Some(3));
+        assert_eq!(deque.pop_back(), Some(4));
+        assert_eq!(deque.pop_back(), None);
+    }
+
+    #[test]
+    fn test_capacity_limit() {
+        let deque: LockFreeDeque<i32, 3> = LockFreeDeque::new();
+
+        assert!(deque.push_back(1).is_ok());
+        assert!(deque.push_back(2).is_ok());
+        assert!(deque.push_back(3).is_err()); // Should fail, queue is full
+    }
+
+    #[test]
+    fn test_concurrent_operations() {
+        let deque = Arc::new(LockFreeDeque::<i32, 100>::new());
+        let mut handles = vec![];
+
+        // Spawn multiple producers
+        for i in 0..4 {
+            let deque_clone = Arc::clone(&deque);
+            let handle = thread::spawn(move || {
+                for j in 0..25 {
+                    let value = i * 25 + j;
+                    while deque_clone.push_back(value).is_err() {
+                        thread::yield_now();
+                    }
+                }
+            });
+            handles.push(handle);
+        }
+
+        // Spawn multiple consumers
+        for _ in 0..2 {
+            let deque_clone = Arc::clone(&deque);
+            let handle = thread::spawn(move || {
+                let mut count = 0;
+                while count < 50 {
+                    if let Some(_) = deque_clone.pop_front() {
+                        count += 1;
+                    } else {
+                        thread::yield_now();
+                    }
+                }
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        assert!(deque.is_empty());
+    }
+
+    #[test]
+    fn test_mixed_operations() {
+        let deque: LockFreeDeque<i32, 6> = LockFreeDeque::new();
+
+        // Mix front and back operations
+        assert!(deque.push_front(1).is_ok());
+        assert!(deque.push_back(2).is_ok());
+        assert!(deque.push_front(0).is_ok());
+        assert!(deque.push_back(3).is_ok());
+
+        // Should be: [0, 1, 2, 3]
+        assert_eq!(deque.pop_front(), Some(0));
+        assert_eq!(deque.pop_back(), Some(3));
+        assert_eq!(deque.pop_front(), Some(1));
+        assert_eq!(deque.pop_back(), Some(2));
+        assert!(deque.is_empty());
+    }
+
+    #[test]
+    fn test_dequeue() {
+        let deque = LockFreeDeque::<usize, 16>::new();
+        for i in 0..4 {
+            let _ = deque.push_front(i);
+        }
+        for _ in 0..18 {
+            println!("{:?}", deque.pop_front());
+        }
+
+        // for _ in 0..5 {
+        //     println!("{:?}", deque.alloc_node());
+        // }
+    }
+
+    #[test]
+    fn test_mpsc() {
+        let pad = 64usize;
+
+        let flag = Arc::new(AtomicI32::new(3));
+        let flag1 = flag.clone();
+        let flag2 = flag.clone();
+        let flag3 = flag.clone();
+        let p1 = Arc::new(LockFreeDeque::<usize, 256>::new());
+        let p2 = p1.clone();
+        let p3 = p1.clone();
+        let c = p1.clone();
+
+        let t1 = thread::spawn(move || {
+            for i in 0..pad {
+                let _ = p1.push_back(i);
+            }
+            flag1.fetch_sub(1, Ordering::SeqCst);
+        });
+        let t2 = thread::spawn(move || {
+            for i in pad..(2 * pad) {
+                let _ = p2.push_back(i);
+            }
+            flag2.fetch_sub(1, Ordering::SeqCst);
+        });
+        let t3 = thread::spawn(move || {
+            for i in (2 * pad)..(3 * pad) {
+                let _ = p3.push_back(i);
+            }
+            flag3.fetch_sub(1, Ordering::SeqCst);
+        });
+
+        let mut sum = 0;
+        while flag.load(Ordering::SeqCst) != 0 || !c.is_empty() {
+            if let Some(num) = c.pop_front() {
+                sum += num;
+            }
+        }
+
+        t1.join().unwrap();
+        t2.join().unwrap();
+        t3.join().unwrap();
+        assert_eq!(sum, (0..(3 * pad)).sum());
+    }
+
+    #[test]
+    fn test_mpmc() {
+        let pad = 64usize;
+
+        let flag = Arc::new(AtomicI32::new(3));
+        let flag_c = flag.clone();
+        let flag1 = flag.clone();
+        let flag2 = flag.clone();
+        let flag3 = flag.clone();
+
+        let p1 = Arc::new(LockFreeDeque::<usize, 256>::new());
+        let p2 = p1.clone();
+        let p3 = p1.clone();
+        let c1 = p1.clone();
+        let c2 = p1.clone();
+
+        let producer1 = thread::spawn(move || {
+            for i in 0..pad {
+                let _ = p1.push_back(i);
+            }
+            flag1.fetch_sub(1, Ordering::SeqCst);
+        });
+        let producer2 = thread::spawn(move || {
+            for i in pad..(2 * pad) {
+                let _ = p2.push_back(i);
+            }
+            flag2.fetch_sub(1, Ordering::SeqCst);
+        });
+        let producer3 = thread::spawn(move || {
+            for i in (2 * pad)..(3 * pad) {
+                let _ = p3.push_back(i);
+            }
+            flag3.fetch_sub(1, Ordering::SeqCst);
+        });
+
+        let consumer = thread::spawn(move || {
+            let mut sum = 0;
+            while flag_c.load(Ordering::SeqCst) != 0 || !c2.is_empty() {
+                if let Some(num) = c2.pop_front() {
+                    sum += num;
+                }
+            }
+            sum
+        });
+
+        let mut sum = 0;
+        while flag.load(Ordering::SeqCst) != 0 || !c1.is_empty() {
+            if let Some(num) = c1.pop_front() {
+                sum += num;
+            }
+        }
+
+        producer1.join().unwrap();
+        producer2.join().unwrap();
+        producer3.join().unwrap();
+
+        let s = consumer.join().unwrap();
+        sum += s;
+        assert_eq!(sum, (0..(3 * pad)).sum());
+    }
+
+    #[test]
+    fn test_mpmc_rev() {
+        let pad = 64usize;
+
+        let flag = Arc::new(AtomicI32::new(3));
+        let flag_c = flag.clone();
+        let flag1 = flag.clone();
+        let flag2 = flag.clone();
+        let flag3 = flag.clone();
+
+        let p1 = Arc::new(LockFreeDeque::<usize, 256>::new());
+        let p2 = p1.clone();
+        let p3 = p1.clone();
+        let c1 = p1.clone();
+        let c2 = p1.clone();
+
+        let producer1 = thread::spawn(move || {
+            for i in 0..pad {
+                let _ = p1.push_front(i);
+            }
+            flag1.fetch_sub(1, Ordering::SeqCst);
+        });
+        let producer2 = thread::spawn(move || {
+            for i in pad..(2 * pad) {
+                let _ = p2.push_front(i);
+            }
+            flag2.fetch_sub(1, Ordering::SeqCst);
+        });
+        let producer3 = thread::spawn(move || {
+            for i in (2 * pad)..(3 * pad) {
+                let _ = p3.push_front(i);
+            }
+            flag3.fetch_sub(1, Ordering::SeqCst);
+        });
+
+        let consumer = thread::spawn(move || {
+            let mut sum = 0;
+            while flag_c.load(Ordering::SeqCst) != 0 || !c2.is_empty() {
+                if let Some(num) = c2.pop_back() {
+                    sum += num;
+                }
+            }
+            sum
+        });
+
+        let mut sum = 0;
+        while flag.load(Ordering::SeqCst) != 0 || !c1.is_empty() {
+            if let Some(num) = c1.pop_back() {
+                sum += num;
+            }
+        }
+
+        producer1.join().unwrap();
+        producer2.join().unwrap();
+        producer3.join().unwrap();
+
+        let s = consumer.join().unwrap();
+        sum += s;
+        assert_eq!(sum, (0..(3 * pad)).sum());
+    }
+
+    #[test]
+    fn test_mpmc_mix() {
+        let mut count = 10000;
+        while count > 0 {
+            count -= 1;
+            let pad = 1000usize;
+
+            let flag = Arc::new(AtomicI32::new(3));
+            let flag_c = flag.clone();
+            let flag1 = flag.clone();
+            let flag2 = flag.clone();
+            let flag3 = flag.clone();
+
+            let p1 = Arc::new(LockFreeDeque::<usize, 4096>::new());
+            let p2 = p1.clone();
+            let p3 = p1.clone();
+            let c1 = p1.clone();
+            let c2 = p1.clone();
+
+            let producer1 = thread::spawn(move || {
+                for i in 0..pad {
+                    let _ = p1.push_front(i);
+                }
+                flag1.fetch_sub(1, Ordering::SeqCst);
+            });
+            let producer2 = thread::spawn(move || {
+                for i in pad..(2 * pad) {
+                    let _ = p2.push_back(i);
+                }
+                flag2.fetch_sub(1, Ordering::SeqCst);
+            });
+            let producer3 = thread::spawn(move || {
+                for i in (2 * pad)..(3 * pad) {
+                    let _ = p3.push_front(i);
+                }
+                flag3.fetch_sub(1, Ordering::SeqCst);
+            });
+
+            let consumer = thread::spawn(move || {
+                let mut sum = 0;
+                while flag_c.load(Ordering::SeqCst) != 0 || !c2.is_empty() {
+                    if let Some(num) = c2.pop_front() {
+                        sum += num;
+                    }
+                }
+                sum
+            });
+
+            let mut sum = 0;
+            while flag.load(Ordering::SeqCst) != 0 || !c1.is_empty() {
+                if let Some(num) = c1.pop_front() {
+                    sum += num;
+                }
+            }
+
+            producer1.join().unwrap();
+            producer2.join().unwrap();
+            producer3.join().unwrap();
+
+            let s = consumer.join().unwrap();
+            sum += s;
+            assert_eq!(sum, (0..(3 * pad)).sum());
+        }
+    }
+}

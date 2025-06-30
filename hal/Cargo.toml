@@ -1,0 +1,28 @@
+[package]
+name = "hal"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+
+[features]
+tls = []
+uspace = []
+
+[dependencies]
+linkme = "0.3"
+log = "0.4"
+cfg-if = "1.0"
+memory_addr = "0.4"
+page_table_entry = "0.5"
+static_assertions = "1.1.0"
+
+
+[target.'cfg(any(target_arch = "riscv32", target_arch = "riscv64"))'.dependencies]
+riscv = "0.14"

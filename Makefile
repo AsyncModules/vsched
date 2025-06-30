@@ -1,0 +1,68 @@
+ARCH ?= x86_64
+SMP ?= 1
+MODE ?= release
+V ?=
+PLATFORM ?=
+TARGET_DIR ?= $(PWD)/target
+PACKEAGE = vsched
+LIB ?= libvsched
+RQ_CAP ?= 256
+
+OBJDUMP = rust-objdump -t -T -r -R -d --print-imm-hex --x86-asm-syntax=intel
+OBJCOPY = rust-objcopy -X -g
+
+# Target
+ifeq ($(ARCH), x86_64)
+  TARGET := x86_64-unknown-linux-musl
+else ifeq ($(ARCH), aarch64)
+	TARGET := aarch64-unknown-linux-musl
+else ifeq ($(ARCH), riscv64)
+  TARGET := riscv64gc-unknown-linux-musl
+else
+  $(error "ARCH" must be one of "x86_64", "riscv64" or "aarch64")
+endif
+
+
+LD_SCRIPT := $(TARGET_DIR)/linker_$(ARCH).lds
+OUPUT_SO := $(TARGET_DIR)/$(TARGET)/$(MODE)/$(LIB).so
+build_args-release := --release
+
+ifeq ($(V),1)
+  verbose := -v
+else ifeq ($(V),2)
+  verbose := -vv
+else
+  verbose :=
+endif
+
+build_args := \
+	-p $(PACKEAGE) \
+  -Z unstable-options \
+  -Z build-std \
+  --target $(TARGET) \
+  --target-dir $(TARGET_DIR) \
+  $(build_args-$(MODE)) \
+  $(verbose)
+
+
+all:
+ifeq ($(wildcard $(TARGET_DIR)),)
+	mkdir $(TARGET_DIR)
+endif
+	@sed 's/%ARCH%/$(ARCH)/g' linker.lds > $(LD_SCRIPT)
+	RQ_CAP=${RQ_CAP} cargo build $(build_args)
+	@$(OBJCOPY) $(OUPUT_SO) $(OUPUT_SO)
+
+
+disasm: all
+	@$(OBJDUMP) $(OUPUT_SO)
+
+clean:
+	rm -rf $(TARGET_DIR)
+
+utest:
+	@echo "test in std"
+
+
+
+.PHONY: all clean 

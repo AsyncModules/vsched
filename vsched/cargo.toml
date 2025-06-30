@@ -1,0 +1,32 @@
+[package]
+name = "vsched"
+version.workspace = true
+edition.workspace = true
+authors = ["Fangliang Zhao <1491657576@qq.com>"]
+description = "Shared Scheduler via vDSO"
+license.workspace = true
+homepage.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = ["task_inner/multitask"]
+
+irq = ["task_inner/irq"]
+tls = ["task_inner/tls"]
+preempt = ["irq", "task_inner/preempt"]
+smp = ["task_inner/smp"]
+
+multitask = ["task_inner/multitask"]
+sched_fifo = ["multitask", "task_inner/sched_fifo"]
+sched_rr = ["multitask", "preempt", "task_inner/sched_rr"]
+sched_cfs = ["multitask", "preempt", "task_inner/sched_cfs"]
+
+[dependencies]
+cfg-if = "1.0"
+hal = { workspace = true }
+scheduler = { workspace = true }
+config = { workspace = true }
+task_inner = { workspace = true }
+crossbeam = { version = "0.8", default-features = false }
