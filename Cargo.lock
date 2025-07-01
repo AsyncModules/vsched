@@ -67,17 +67,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crate_interface"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70272a03a2cef15589bac05d3d15c023752f5f8f2da8be977d983a9d9e6250fb"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "critical-section"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -135,12 +124,6 @@ dependencies = [
  "hash32",
  "stable_deref_trait",
 ]
-
-[[package]]
-name = "lazyinit"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17f03abfebdaaf0fad16790237a0348baf84886d3ade460db13bae59e614a180"
 
 [[package]]
 name = "libc"
@@ -335,20 +318,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "task_inner"
-version = "0.0.0"
-dependencies = [
- "config",
- "cpumask",
- "crate_interface",
- "crossbeam",
- "hal",
- "lazyinit",
- "memory_addr 0.4.0",
- "scheduler",
-]
-
-[[package]]
 name = "tock-registers"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -364,6 +333,7 @@ checksum = "5a5f39404a5da50712a4c1eecf25e90dd62b613502b7e925fd4e4d19b5c96512"
 name = "user_test"
 version = "0.0.0"
 dependencies = [
+ "config",
  "libc",
  "memmap",
 ]
@@ -380,10 +350,11 @@ version = "0.0.0"
 dependencies = [
  "cfg-if",
  "config",
+ "cpumask",
  "crossbeam",
  "hal",
+ "memory_addr 0.4.0",
  "scheduler",
- "task_inner",
 ]
 
 [[package]]

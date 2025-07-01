@@ -38,7 +38,8 @@ endif
 build_args := \
 	-p $(PACKEAGE) \
   -Z unstable-options \
-  -Z build-std \
+  -Z build-std=core,compiler_builtins \
+  -Z build-std-features=compiler-builtins-mem \
   --target $(TARGET) \
   --target-dir $(TARGET_DIR) \
   $(build_args-$(MODE)) \

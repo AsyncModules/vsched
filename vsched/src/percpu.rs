@@ -1,7 +1,5 @@
 use crate::api::{AxTaskRef, Scheduler};
-use config::RQ_CAP;
 use core::cell::UnsafeCell;
-use scheduler::LockFreeDeque;
 
 pub(crate) struct PerCPU {
     /// The ID of the CPU this run queue is associated with.
@@ -12,8 +10,6 @@ pub(crate) struct PerCPU {
     pub(crate) scheduler: Scheduler,
 
     pub(crate) current_task: UnsafeCell<AxTaskRef>,
-
-    pub(crate) exit_tasks: LockFreeDeque<AxTaskRef, RQ_CAP>,
 
     pub(crate) idle_task: AxTaskRef,
     /// Stores the weak reference to the previous task that is running on this CPU.
@@ -27,7 +23,6 @@ impl PerCPU {
             cpu_id,
             scheduler: Scheduler::new(),
             current_task: UnsafeCell::new(AxTaskRef::EMPTY),
-            exit_tasks: LockFreeDeque::new(),
             idle_task,
             #[cfg(feature = "smp")]
             prev_task: UnsafeCell::new(AxTaskRef::EMPTY),

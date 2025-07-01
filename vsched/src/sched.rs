@@ -1,8 +1,7 @@
 use crate::api::AxTaskRef;
 use crate::percpu::PerCPU;
-use core::task::Poll;
 use scheduler::BaseScheduler;
-use task_inner::TaskState;
+use crate::task::TaskState;
 
 /// Selects the run queue index based on a CPU set bitmap and load balancing.
 ///
@@ -159,7 +158,7 @@ impl PerCPU {
     ///
     /// This function does nothing if the task is not in [`TaskState::Blocked`],
     /// which means the task is already unblocked by other cores.
-    pub fn unblock_task(&mut self, task: AxTaskRef, resched: bool, this_cpu_id: usize) {
+    pub fn unblock_task(&self, task: AxTaskRef, resched: bool, src_cpu_id: usize) {
         let _task_id = task.as_ref().id();
         // Try to change the state of the task from `Blocked` to `Ready`,
         // if successful, the task will be put into this run queue,
@@ -168,10 +167,9 @@ impl PerCPU {
         // target task can not be insert into the run queue until it finishes its scheduling process.
         if self.put_task_with_state(&task, TaskState::Blocked, resched) {
             // Since now, the task to be unblocked is in the `Ready` state.
-            let cpu_id = self.cpu_id;
             // Note: when the task is unblocked on another CPU's run queue,
             // we just ingiore the `resched` flag.
-            if resched && cpu_id == this_cpu_id {
+            if resched && src_cpu_id == self.cpu_id {
                 // TODO: 增加判断当前任务的条件
                 #[cfg(feature = "preempt")]
                 get_run_queue(this_cpu_id)
@@ -179,20 +177,11 @@ impl PerCPU {
                     .load()
                     .as_ref()
                     .set_preempt_pending(true);
-                // #[cfg(feature = "preempt")]
-                // crate::current().set_preempt_pending(true);
             }
         }
     }
 
-    #[cfg(feature = "irq")]
-    pub fn scheduler_timer_tick(&self) {
-        let curr = &self.current_task.load().as_ref();
-        if !curr.is_idle() && self.scheduler.task_tick(curr) {
-            #[cfg(feature = "preempt")]
-            curr.set_preempt_pending(true);
-        }
-    }
+    
 
     /// Yield the current task and reschedule.
     /// This function will put the current task into this run queue with `Ready` state,
@@ -206,141 +195,6 @@ impl PerCPU {
         self.resched();
     }
 
-    /// Migrate the current task to a new run queue matching its CPU affinity and reschedule.
-    /// This function will spawn a new `migration_task` to perform the migration, which will set
-    /// current task to `Ready` state and select a proper run queue for it according to its CPU affinity,
-    /// switch to the migration task immediately after migration task is prepared.
-    ///
-    /// Note: the ownership if migrating task (which is current task) is handed over to the migration task,
-    /// before the migration task inserted it into the target run queue.
-    #[cfg(feature = "smp")]
-    pub fn migrate_current(&self, migration_task: AxTaskRef) {
-        let curr = self.current_task.load();
-        assert!(curr.as_ref().is_running());
-
-        // Mark current task's state as `Ready`,
-        // but, do not put current task to the scheduler of this run queue.
-        curr.as_ref().set_state(TaskState::Ready);
-
-        // Call `switch_to` to reschedule to the migration task that performs the migration directly.
-        self.switch_to(curr, migration_task);
-    }
-
-    /// Preempts the current task and reschedules.
-    /// This function is used to preempt the current task and reschedule
-    /// to next task on current run queue.
-    ///
-    /// This function is called by `current_check_preempt_pending` with IRQs and preemption disabled.
-    ///
-    /// Note:
-    /// preemption may happened in `enable_preempt`, which is called
-    /// each time a [`kspin::NoPreemptGuard`] is dropped.
-    #[cfg(feature = "preempt")]
-    pub fn preempt_resched(&mut self) {
-        // There is no need to disable IRQ and preemption here, because
-        // they both have been disabled in `current_check_preempt_pending`.
-        let curr = self.current_task.load();
-        assert!(curr.as_ref().is_running());
-
-        // When we call `preempt_resched()`, both IRQs and preemption must
-        // have been disabled by `kernel_guard::NoPreemptIrqSave`. So we need
-        // to set `current_disable_count` to 1 in `can_preempt()` to obtain
-        // the preemption permission.
-        let can_preempt = curr.as_ref().can_preempt(1);
-
-        if can_preempt {
-            self.put_task_with_state(curr.clone(), TaskState::Running, true);
-            self.resched();
-        } else {
-            curr.as_ref().set_preempt_pending(true);
-        }
-    }
-
-    /// Exit the current task with the specified exit code.
-    /// This function will never return.
-    pub fn exit_current(&self, exit_code: i32) -> ! {
-        let curr = unsafe { self.current_task.as_ref_unchecked() };
-        assert!(
-            curr.as_ref().is_running(),
-            "task is not running: {:?}",
-            curr.as_ref().state()
-        );
-        assert!(!curr.as_ref().is_idle());
-        if curr.as_ref().is_init() {
-            // Safety: it is called from `current_run_queue::<NoPreemptIrqSave>().exit_current(exit_code)`,
-            // which disabled IRQs and preemption.
-            while !self.exit_tasks.is_empty() {
-                self.exit_tasks.pop_front();
-            }
-            // hal::misc::terminate();
-        } else {
-            curr.as_ref().set_state(TaskState::Exited);
-
-            // Notify the joiner task.
-            curr.as_ref().notify_exit(exit_code);
-
-            // // Safety: it is called from `current_run_queue::<NoPreemptIrqSave>().exit_current(exit_code)`,
-            // // which disabled IRQs and preemption.
-            // unsafe {
-            //     // Push current task to the `EXITED_TASKS` list, which will be consumed by the GC task.
-            //     EXITED_TASKS.current_ref_mut_raw().push_back(curr.clone());
-            //     // Wake up the GC task to drop the exited tasks.
-            //     WAIT_FOR_EXIT.current_ref_mut_raw().notify_one(false);
-            // }
-
-            // Schedule to next task.
-            self.resched();
-        }
-        unreachable!("task exited!");
-    }
-
-    // /// Block the current task, put current task into the wait queue and reschedule.
-    // /// Mark the state of current task as `Blocked`, set the `in_wait_queue` flag as true.
-    // /// Note:
-    // ///     1. The caller must hold the lock of the wait queue.
-    // ///     2. The caller must ensure that the current task is in the running state.
-    // ///     3. The caller must ensure that the current task is not the idle task.
-    // ///     4. The lock of the wait queue will be released explicitly after current task is pushed into it.
-    // pub fn blocked_resched(&mut self, mut wq_guard: WaitQueueGuard) {
-    //     let curr = self.current_task.load();
-    //     assert!(curr.as_ref().is_running());
-    //     assert!(!curr.as_ref().is_idle());
-    //     // we must not block current task with preemption disabled.
-    //     // Current expected preempt count is 2.
-    //     // 1 for `NoPreemptIrqSave`, 1 for wait queue's `SpinNoIrq`.
-    //     #[cfg(feature = "preempt")]
-    //     assert!(curr.as_ref().can_preempt(2));
-
-    //     // Mark the task as blocked, this has to be done before adding it to the wait queue
-    //     // while holding the lock of the wait queue.
-    //     curr.as_ref().set_state(TaskState::Blocked);
-    //     curr.as_ref().set_in_wait_queue(true);
-
-    //     wq_guard.push_back(curr.clone());
-    //     // Drop the lock of wait queue explictly.
-    //     drop(wq_guard);
-
-    //     // Current task's state has been changed to `Blocked` and added to the wait queue.
-    //     // Note that the state may have been set as `Ready` in `unblock_task()`,
-    //     // see `unblock_task()` for details.
-
-    //     self.resched();
-    // }
-
-    // #[cfg(feature = "irq")]
-    // pub fn sleep_until(&mut self, deadline: axhal::time::TimeValue) {
-    //     let curr = self.current_task.load();
-    //     assert!(curr.as_ref().is_running());
-    //     assert!(!curr.as_ref().is_idle());
-
-    //     let now = axhal::time::wall_time();
-    //     if now < deadline {
-    //         crate::timers::set_alarm_wakeup(deadline, curr.clone());
-    //         curr.as_ref().set_state(TaskState::Blocked);
-    //         self.resched();
-    //     }
-    // }
-
     pub fn set_current_priority(&self, prio: isize) -> bool {
         self.scheduler
             .set_priority(unsafe { self.current_task.as_ref_unchecked() }, prio)
@@ -348,7 +202,7 @@ impl PerCPU {
 
     /// Core reschedule subroutine.
     /// Pick the next task to run and switch to it.
-    fn resched(&self) {
+    pub(crate) fn resched(&self) {
         let next = self.scheduler.pick_next_task().unwrap_or_else(|| 
             // Safety: IRQs must be disabled at this time.
             self.idle_task.clone()
@@ -362,13 +216,7 @@ impl PerCPU {
         self.switch_to(unsafe { self.current_task.as_ref_unchecked() }, next);
     }
 
-    fn switch_to(&self, prev_task: &AxTaskRef, next_task: AxTaskRef) {
-        // Make sure that IRQs are disabled by kernel guard or other means.
-        #[cfg(all(not(test), feature = "irq"))] // Note: irq is faked under unit tests.
-        assert!(
-            !axhal::arch::irqs_enabled(),
-            "IRQs must be disabled during scheduling"
-        );
+    pub(crate) fn switch_to(&self, prev_task: &AxTaskRef, next_task: AxTaskRef) {
         #[cfg(feature = "preempt")]
         next_task.as_ref().set_preempt_pending(false);
         next_task.as_ref().set_state(TaskState::Running);
@@ -384,6 +232,7 @@ impl PerCPU {
         unsafe {
             let prev_ctx_ptr = prev_task.as_ref().ctx_mut_ptr();
             let next_ctx_ptr = next_task.as_ref().ctx_mut_ptr();
+            // TODO:
             // // If the next task is a coroutine, this will set the kstack and ctx.
             // next_task.as_ref().set_kstack();
 
@@ -391,13 +240,7 @@ impl PerCPU {
             #[cfg(feature = "smp")]
             {
                 self.prev_task.replace(prev_task);
-                // *PREV_TASK.current_ref_mut_raw() = Arc::downgrade(prev_task.as_task_ref());
             }
-
-            // // The strong reference count of `prev_task` will be decremented by 1,
-            // // but won't be dropped until `gc_entry()` is called.
-            // assert!(Arc::strong_count(prev_task.as_task_ref()) > 1);
-            // assert!(Arc::strong_count(&next_task) >= 1);
 
             *self.current_task.as_mut_unchecked() = next_task;
             // CurrentTask::set_current(prev_task, next_task);
@@ -407,7 +250,7 @@ impl PerCPU {
             // Current it's **next_task** running on this CPU, clear the `prev_task`'s `on_cpu` field
             // to indicate that it has finished its scheduling process and no longer running on this CPU.
             #[cfg(feature = "smp")]
-            clear_prev_task_on_cpu();
+            self.prev_task.as_ref_unchecked().as_ref().set_on_cpu(false);
         }
     }
 
@@ -415,7 +258,7 @@ impl PerCPU {
     /// Pick the next task to run and switch to it.
     /// This function is only used in `YieldFuture`, `ExitFuture`,
     /// `SleepUntilFuture` and `BlockedReschedFuture`.
-    fn resched_f(&mut self) -> Poll<()> {
+    pub(crate) fn resched_f(&self) -> bool {
         let next_task = self.scheduler.pick_next_task().unwrap_or_else(|| 
             // Safety: IRQs must be disabled at this time.
             self.idle_task.clone()
@@ -437,7 +280,7 @@ impl PerCPU {
         next_task.as_ref().set_preempt_pending(false);
         next_task.as_ref().set_state(TaskState::Running);
         if prev_task.ptr_eq(&next_task) {
-            return Poll::Ready(());
+            return true;
         }
 
         // Claim the task as running, we do this before switching to it
@@ -461,363 +304,10 @@ impl PerCPU {
             // Directly change the `CurrentTask` and return `Pending`.
             // CurrentTask::set_current(prev_task, next_task);
             *self.current_task.as_mut_unchecked() = next_task;
-            Poll::Pending
+            false
         }
     }
 }
 
-// impl AxRunQueue {
-// /// Create a new run queue for the specified CPU.
-// /// The run queue is initialized with a per-CPU gc task in its scheduler.
-// fn new(cpu_id: usize) -> Self {
-//     let gc_task = TaskInner::new(gc_entry, "gc".into(), axconfig::TASK_STACK_SIZE).into_arc();
-//     // gc task should be pinned to the current CPU.
-//     gc_task.set_cpumask(AxCpuMask::one_shot(cpu_id));
 
-//     let mut scheduler = Scheduler::new();
-//     scheduler.add_task(gc_task);
-//     Self {
-//         cpu_id,
-//         scheduler: SpinRaw::new(scheduler),
-//     }
-// }
-// }
 
-// fn gc_entry() {
-//     loop {
-//         // Drop all exited tasks and recycle resources.
-//         let n = EXITED_TASKS.with_current(|exited_tasks| exited_tasks.len());
-//         for _ in 0..n {
-//             // Do not do the slow drops in the critical section.
-//             let task = EXITED_TASKS.with_current(|exited_tasks| exited_tasks.pop_front());
-//             if let Some(task) = task {
-//                 if Arc::strong_count(&task) == 1 {
-//                     // If I'm the last holder of the task, drop it immediately.
-//                     drop(task);
-//                 } else {
-//                     // Otherwise (e.g, `switch_to` is not compeleted, held by the
-//                     // joiner, etc), push it back and wait for them to drop first.
-//                     EXITED_TASKS.with_current(|exited_tasks| exited_tasks.push_back(task));
-//                 }
-//             }
-//         }
-//         // Note: we cannot block current task with preemption disabled,
-//         // use `current_ref_raw` to get the `WAIT_FOR_EXIT`'s reference here to avoid the use of `NoPreemptGuard`.
-//         // Since gc task is pinned to the current CPU, there is no affection if the gc task is preempted during the process.
-//         unsafe { WAIT_FOR_EXIT.current_ref_raw() }.wait();
-//     }
-// }
-
-// /// The task routine for migrating the current task to the correct CPU.
-// ///
-// /// It calls `select_run_queue` to get the correct run queue for the task, and
-// /// then puts the task to the scheduler of target run queue.
-// #[cfg(feature = "smp")]
-// pub(crate) fn migrate_entry(migrated_task: AxTaskRef) {
-//     select_run_queue::<kernel_guard::NoPreemptIrqSave>(&migrated_task)
-//         .inner
-//         .scheduler
-//         .lock()
-//         .put_prev_task(migrated_task, false)
-// }
-
-// /// Clear the `on_cpu` field of previous task running on this CPU.
-// #[cfg(feature = "smp")]
-// pub(crate) unsafe fn clear_prev_task_on_cpu() {
-//     unsafe {
-//         PREV_TASK
-//             .current_ref_raw()
-//             .upgrade()
-//             .expect("Invalid prev_task pointer or prev_task has been dropped")
-//             .set_on_cpu(false);
-//     }
-// }
-
-// pub(crate) fn init() {
-//     let cpu_id = this_cpu_id();
-
-//     // Create the `idle` task (not current task).
-//     const IDLE_TASK_STACK_SIZE: usize = 4096;
-//     let idle_task = TaskInner::new(|| crate::run_idle(), "idle".into(), IDLE_TASK_STACK_SIZE);
-//     // idle task should be pinned to the current CPU.
-//     idle_task.set_cpumask(AxCpuMask::one_shot(cpu_id));
-//     IDLE_TASK.with_current(|i| {
-//         i.init_once(idle_task.into_arc());
-//     });
-
-//     // Put the subsequent execution into the `main` task.
-//     let main_task = TaskInner::new_init("main".into()).into_arc();
-//     main_task.set_state(TaskState::Running);
-//     unsafe { CurrentTask::init_current(main_task) }
-
-//     RUN_QUEUE.with_current(|rq| {
-//         rq.init_once(AxRunQueue::new(cpu_id));
-//     });
-//     unsafe {
-//         RUN_QUEUES[cpu_id].write(RUN_QUEUE.current_ref_mut_raw());
-//     }
-// }
-
-// pub(crate) fn init_secondary() {
-//     let cpu_id = this_cpu_id();
-
-//     // Put the subsequent execution into the `idle` task.
-//     let idle_task = TaskInner::new_init("idle".into()).into_arc();
-//     idle_task.set_state(TaskState::Running);
-//     IDLE_TASK.with_current(|i| {
-//         i.init_once(idle_task.clone());
-//     });
-//     unsafe { CurrentTask::init_current(idle_task) }
-
-//     RUN_QUEUE.with_current(|rq| {
-//         rq.init_once(AxRunQueue::new(cpu_id));
-//     });
-//     unsafe {
-//         RUN_QUEUES[cpu_id].write(RUN_QUEUE.current_ref_mut_raw());
-//     }
-// }
-
-// /// The `YieldFuture` used when yielding the current task and reschedule.
-// /// When polling this future, the current task will be put into the run queue
-// /// with `Ready` state and reschedule to the next task on the run queue.
-// ///
-// /// The polling operation is as the same as the
-// /// `current_run_queue::<NoPreemptIrqSave>().yield_current()` function.
-// ///
-// /// SAFETY:
-// /// Due to this future is constructed with `current_run_queue::<NoPreemptIrqSave>()`,
-// /// the operation about manipulating the RunQueue and the switching to next task is
-// /// safe(The `IRQ` and `Preempt` are disabled).
-// pub(crate) struct YieldFuture<'a, G: BaseGuard> {
-//     current_run_queue: CurrentRunQueueRef<'a, G>,
-//     flag: bool,
-// }
-
-// impl<'a, G: BaseGuard> YieldFuture<'a, G> {
-//     pub(crate) fn new() -> Self {
-//         Self {
-//             current_run_queue: current_run_queue::<G>(),
-//             flag: false,
-//         }
-//     }
-// }
-
-// impl<'a, G: BaseGuard> Unpin for YieldFuture<'a, G> {}
-
-// impl<'a, G: BaseGuard> Future for YieldFuture<'a, G> {
-//     type Output = ();
-//     fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-//         let Self {
-//             current_run_queue,
-//             flag,
-//         } = self.get_mut();
-//         if !(*flag) {
-//             *flag = !*flag;
-//             let curr = &current_run_queue.current_task;
-//             assert!(curr.is_running());
-//             current_run_queue
-//                 .inner
-//                 .put_task_with_state(curr.clone(), TaskState::Running, false);
-//             current_run_queue.inner.resched_f()
-//         } else {
-//             Poll::Ready(())
-//         }
-//     }
-// }
-
-// /// Due not manually release the `current_run_queue.state`,
-// /// otherwise it will cause double release.
-// impl<'a, G: BaseGuard> Drop for YieldFuture<'a, G> {
-//     fn drop(&mut self) {}
-// }
-
-// /// The `ExitFuture` used when exiting the current task
-// /// with the specified exit code, which is always return `Poll::Pending`.
-// ///
-// /// The polling operation is as the same as the
-// /// `current_run_queue::<NoPreemptIrqSave>().exit_current()` function.
-// ///
-// /// SAFETY: as the same as the `YieldFuture`. However, It wrap the `CurrentRunQueueRef`
-// /// with `ManuallyDrop`, otherwise the `IRQ` and `Preempt` state of other
-// /// tasks(maybe `main` or `gc` task) which recycle the exited task(which used this future)
-// /// will be error due to automatically drop the `CurrentRunQueueRef.
-// /// The `CurrentRunQueueRef` should never be drop.
-// pub(crate) struct ExitFuture<'a, G: BaseGuard> {
-//     current_run_queue: core::mem::ManuallyDrop<CurrentRunQueueRef<'a, G>>,
-//     exit_code: i32,
-// }
-
-// impl<'a, G: BaseGuard> ExitFuture<'a, G> {
-//     pub(crate) fn new(exit_code: i32) -> Self {
-//         Self {
-//             current_run_queue: core::mem::ManuallyDrop::new(current_run_queue::<G>()),
-//             exit_code,
-//         }
-//     }
-// }
-
-// impl<'a, G: BaseGuard> Unpin for ExitFuture<'a, G> {}
-
-// impl<'a, G: BaseGuard> Future for ExitFuture<'a, G> {
-//     type Output = ();
-//     fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-//         let Self {
-//             current_run_queue,
-//             exit_code,
-//         } = self.get_mut();
-//         let exit_code = *exit_code;
-//         let curr = &current_run_queue.current_task;
-//         assert!(curr.is_running(), "task is not running: {:?}", curr.state());
-//         assert!(!curr.is_idle());
-//         curr.set_state(TaskState::Exited);
-
-//         // Notify the joiner task.
-//         curr.notify_exit(exit_code);
-
-//         // Safety: it is called from `current_run_queue::<NoPreemptIrqSave>().exit_current(exit_code)`,
-//         // which disabled IRQs and preemption.
-//         unsafe {
-//             // Push current task to the `EXITED_TASKS` list, which will be consumed by the GC task.
-//             EXITED_TASKS.current_ref_mut_raw().push_back(curr.clone());
-//             // Wake up the GC task to drop the exited tasks.
-//             WAIT_FOR_EXIT.current_ref_mut_raw().notify_one(false);
-//         }
-
-//         assert!(current_run_queue.inner.resched_f().is_pending());
-//         Poll::Pending
-//     }
-// }
-
-// #[cfg(feature = "irq")]
-// pub(crate) struct SleepUntilFuture<'a, G: BaseGuard> {
-//     current_run_queue: CurrentRunQueueRef<'a, G>,
-//     deadline: axhal::time::TimeValue,
-//     flag: bool,
-// }
-
-// #[cfg(feature = "irq")]
-// impl<'a, G: BaseGuard> SleepUntilFuture<'a, G> {
-//     pub fn new(deadline: axhal::time::TimeValue) -> Self {
-//         Self {
-//             current_run_queue: current_run_queue::<G>(),
-//             deadline,
-//             flag: false,
-//         }
-//     }
-// }
-
-// #[cfg(feature = "irq")]
-// impl<'a, G: BaseGuard> Unpin for SleepUntilFuture<'a, G> {}
-
-// #[cfg(feature = "irq")]
-// impl<'a, G: BaseGuard> Future for SleepUntilFuture<'a, G> {
-//     type Output = ();
-//     fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-//         let Self {
-//             current_run_queue,
-//             deadline,
-//             flag,
-//         } = self.get_mut();
-//         if !(*flag) {
-//             *flag = !*flag;
-//             let deadline = *deadline;
-//             let curr = &current_run_queue.current_task;
-//             assert!(curr.is_running());
-//             assert!(!curr.is_idle());
-
-//             let now = axhal::time::wall_time();
-//             if now < deadline {
-//                 crate::timers::set_alarm_wakeup(deadline, curr.clone());
-//                 curr.set_state(TaskState::Blocked);
-//                 assert!(current_run_queue.inner.resched_f().is_pending());
-//                 Poll::Pending
-//             } else {
-//                 Poll::Ready(())
-//             }
-//         } else {
-//             Poll::Ready(())
-//         }
-//     }
-// }
-
-// #[cfg(feature = "irq")]
-// impl<'a, G: BaseGuard> Drop for SleepUntilFuture<'a, G> {
-//     fn drop(&mut self) {}
-// }
-
-// /// The `BlockedReschedFuture` used when blocking the current task.
-// ///
-// /// When polling this future, current task will be put into the wait queue and reschedule,
-// /// the state of current task will be marked as `Blocked`, set the `in_wait_queue` flag as true.
-// /// Note:
-// ///     1. When polling this future, the wait queue is locked.
-// ///     2. When polling this future, the current task is in the running state.
-// ///     3. When polling this future, the current task is not the idle task.
-// ///     4. The lock of the wait queue will be released explicitly after current task is pushed into it.
-// ///
-// /// SAFETY:
-// /// as the same as the `YieldFuture`. Due to the `WaitQueueGuard` is not implemented
-// /// the `Send` trait, this future must hold the reference about the `WaitQueue` instead
-// /// of the `WaitQueueGuard`.
-// pub(crate) struct BlockedReschedFuture<'a, G: BaseGuard> {
-//     current_run_queue: CurrentRunQueueRef<'a, G>,
-//     wq: &'a WaitQueue,
-//     flag: bool,
-// }
-
-// impl<'a, G: BaseGuard> BlockedReschedFuture<'a, G> {
-//     pub fn new(current_run_queue: CurrentRunQueueRef<'a, G>, wq: &'a WaitQueue) -> Self {
-//         Self {
-//             current_run_queue,
-//             wq,
-//             flag: false,
-//         }
-//     }
-// }
-
-// impl<'a, G: BaseGuard> Unpin for BlockedReschedFuture<'a, G> {}
-
-// impl<'a, G: BaseGuard> Future for BlockedReschedFuture<'a, G> {
-//     type Output = ();
-//     fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-//         let Self {
-//             current_run_queue,
-//             wq,
-//             flag,
-//         } = self.get_mut();
-//         if !(*flag) {
-//             *flag = !*flag;
-//             let mut wq_guard = wq.queue.lock();
-//             let curr = &current_run_queue.current_task;
-//             assert!(curr.is_running());
-//             assert!(!curr.is_idle());
-//             // we must not block current task with preemption disabled.
-//             // Current expected preempt count is 2.
-//             // 1 for `NoPreemptIrqSave`, 1 for wait queue's `SpinNoIrq`.
-//             #[cfg(feature = "preempt")]
-//             assert!(curr.can_preempt(2));
-
-//             // Mark the task as blocked, this has to be done before adding it to the wait queue
-//             // while holding the lock of the wait queue.
-//             curr.set_state(TaskState::Blocked);
-//             curr.set_in_wait_queue(true);
-
-//             wq_guard.push_back(curr.clone());
-//             // Drop the lock of wait queue explictly.
-//             drop(wq_guard);
-
-//             // Current task's state has been changed to `Blocked` and added to the wait queue.
-//             // Note that the state may have been set as `Ready` in `unblock_task()`,
-//             // see `unblock_task()` for details.
-
-//             assert!(current_run_queue.inner.resched_f().is_pending());
-//             Poll::Pending
-//         } else {
-//             Poll::Ready(())
-//         }
-//     }
-// }
-
-// impl<'a, G: BaseGuard> Drop for BlockedReschedFuture<'a, G> {
-//     fn drop(&mut self) {}
-// }
