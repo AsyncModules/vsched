@@ -1,88 +1,6 @@
 use core::arch::naked_asm;
 use memory_addr::VirtAddr;
 
-/// General registers of RISC-V.
-#[allow(missing_docs)]
-#[repr(C)]
-#[derive(Debug, Default, Clone, Copy)]
-pub struct GeneralRegisters {
-    pub ra: usize,
-    pub sp: usize,
-    pub gp: usize, // only valid for user traps
-    pub tp: usize, // only valid for user traps
-    pub t0: usize,
-    pub t1: usize,
-    pub t2: usize,
-    pub s0: usize,
-    pub s1: usize,
-    pub a0: usize,
-    pub a1: usize,
-    pub a2: usize,
-    pub a3: usize,
-    pub a4: usize,
-    pub a5: usize,
-    pub a6: usize,
-    pub a7: usize,
-    pub s2: usize,
-    pub s3: usize,
-    pub s4: usize,
-    pub s5: usize,
-    pub s6: usize,
-    pub s7: usize,
-    pub s8: usize,
-    pub s9: usize,
-    pub s10: usize,
-    pub s11: usize,
-    pub t3: usize,
-    pub t4: usize,
-    pub t5: usize,
-    pub t6: usize,
-}
-
-/// Saved registers when a trap (interrupt or exception) occurs.
-#[repr(C)]
-#[derive(Debug, Default, Clone, Copy)]
-pub struct TrapFrame {
-    /// All general registers.
-    pub regs: GeneralRegisters,
-    /// Supervisor Exception Program Counter.
-    pub sepc: usize,
-    /// Supervisor Status Register.
-    pub sstatus: usize,
-}
-
-impl TrapFrame {
-    /// Gets the 0th syscall argument.
-    pub const fn arg0(&self) -> usize {
-        self.regs.a0
-    }
-
-    /// Gets the 1st syscall argument.
-    pub const fn arg1(&self) -> usize {
-        self.regs.a1
-    }
-
-    /// Gets the 2nd syscall argument.
-    pub const fn arg2(&self) -> usize {
-        self.regs.a2
-    }
-
-    /// Gets the 3rd syscall argument.
-    pub const fn arg3(&self) -> usize {
-        self.regs.a3
-    }
-
-    /// Gets the 4th syscall argument.
-    pub const fn arg4(&self) -> usize {
-        self.regs.a4
-    }
-
-    /// Gets the 5th syscall argument.
-    pub const fn arg5(&self) -> usize {
-        self.regs.a5
-    }
-}
-
 /// Saved hardware states of a task.
 ///
 /// The context usually includes:
@@ -117,60 +35,19 @@ pub struct TaskContext {
 
     pub tp: usize,
     /// The `satp` register value, i.e., the page table root.
-    #[cfg(feature = "uspace")]
     pub satp: memory_addr::PhysAddr,
     // TODO: FP states
 }
 
 impl TaskContext {
-    /// Creates a dummy context for a new task.
-    ///
-    /// Note the context is not initialized, it will be filled by [`switch_to`]
-    /// (for initial tasks) and [`init`] (for regular tasks) methods.
-    ///
-    /// [`init`]: TaskContext::init
-    /// [`switch_to`]: TaskContext::switch_to
-    pub fn new() -> Self {
-        Self {
-            #[cfg(feature = "uspace")]
-            satp: crate::asm::read_kernel_page_table(),
-            ..Default::default()
-        }
-    }
-
-    /// Initializes the context for a new task, with the given entry point and
-    /// kernel stack.
-    pub fn init(&mut self, entry: usize, kstack_top: VirtAddr, tls_area: VirtAddr) {
-        self.sp = kstack_top.as_usize();
-        self.ra = entry;
-        self.tp = tls_area.as_usize();
-    }
-
-    /// Changes the page table root in this context.
-    ///
-    /// The hardware register for page table root (`satp` for riscv64) will be
-    /// updated to the next task's after [`Self::switch_to`].
-    #[cfg(feature = "uspace")]
-    pub fn set_page_table_root(&mut self, satp: memory_addr::PhysAddr) {
-        self.satp = satp;
-    }
-
     /// Switches to another task.
     ///
     /// It first saves the current task's context from CPU to this place, and then
     /// restores the next task's context from `next_ctx` to CPU.
     pub fn switch_to(&mut self, next_ctx: &Self) {
-        #[cfg(feature = "tls")]
-        {
-            self.tp = crate::asm::read_thread_pointer();
-            unsafe { crate::asm::write_thread_pointer(next_ctx.tp) };
-        }
-        #[cfg(feature = "uspace")]
-        if self.satp != next_ctx.satp {
-            unsafe { crate::asm::write_user_page_table(next_ctx.satp) };
-            crate::asm::flush_tlb(None); // currently flush the entire TLB
-        }
+        self.tp = super::asm::read_thread_pointer();
         unsafe {
+            super::asm::write_thread_pointer(next_ctx.tp);
             // TODO: switch FP states
             context_switch(self, next_ctx)
         }

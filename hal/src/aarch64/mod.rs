@@ -1,5 +1,3 @@
-#[macro_use]
-mod macros;
 mod context;
 
 pub mod asm;

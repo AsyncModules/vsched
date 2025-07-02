@@ -15,6 +15,7 @@ pub(crate) fn get_data_base() -> usize {
     pc & config::DATA_SEC_MASK
 }
 
+#[cfg(all(target_os = "linux", not(test)))]
 mod lang_item {
     #[panic_handler]
     fn panic(_info: &core::panic::PanicInfo) -> ! {
