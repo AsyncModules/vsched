@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 
-members = ["config", "hal", "scheduler", "user_test", "vsched"]
+members = ["config", "hal", "scheduler", "user_test", "task_inner", "vsched"]
 
 [workspace.package]
 version = "0.0.0"
@@ -21,6 +21,7 @@ scheduler = { path = "scheduler" }
 vsched = { path = "vsched" }
 config = { path = "config" }
 user_test = { path = "user_test" }
+task_inner = { path = "task_inner" }
 
 [profile.release]
 panic = "abort"

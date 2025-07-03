@@ -13,5 +13,3 @@ cfg_if::cfg_if! {
         pub use self::aarch64::*;
     }
 }
-
-pub mod tls;

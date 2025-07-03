@@ -37,7 +37,6 @@ pub struct TaskInner {
     on_cpu: AtomicBool,
     need_resched: AtomicBool,
     kstack: UnsafeCell<Option<TaskStack>>,
-    tls: hal::tls::TlsArea,
     ctx: UnsafeCell<TaskContext>,
     alloc_stack: Option<usize>,
     coroutine_schedule: Option<usize>,
@@ -191,8 +190,7 @@ impl TaskInner {
             let kstack_top = stack.top();
             *kstack = Some(stack);
             let ctx = unsafe { &mut *self.ctx_mut_ptr() };
-            let tls = VirtAddr::from(self.tls.tls_ptr() as usize);
-            ctx.init(self.coroutine_schedule.unwrap(), kstack_top, tls);
+            ctx.init(self.coroutine_schedule.unwrap(), kstack_top);
         }
     }
 }

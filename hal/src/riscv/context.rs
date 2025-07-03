@@ -40,12 +40,27 @@ pub struct TaskContext {
 }
 
 impl TaskContext {
+    /// Creates a dummy context for a new task.
+    ///
+    /// Note the context is not initialized, it will be filled by [`switch_to`]
+    /// (for initial tasks) and [`init`] (for regular tasks) methods.
+    ///
+    /// [`init`]: TaskContext::init
+    /// [`switch_to`]: TaskContext::switch_to
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Setup the tls register
+    pub fn set_tls(&mut self, tls_area: VirtAddr) {
+        self.tp = tls_area.as_usize();
+    }
+
     /// Initializes the context for a new task, with the given entry point and
     /// kernel stack.
-    pub fn init(&mut self, entry: usize, kstack_top: VirtAddr, tls_area: VirtAddr) {
+    pub fn init(&mut self, entry: usize, kstack_top: VirtAddr) {
         self.sp = kstack_top.as_usize();
         self.ra = entry;
-        self.tp = tls_area.as_usize();
     }
 
     /// Switches to another task.

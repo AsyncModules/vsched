@@ -1,5 +1,5 @@
 use core::arch::naked_asm;
-use memory_addr::VirtAddr;
+use memory_addr::{VirtAddr, va};
 /// Saved hardware states of a task.
 ///
 /// The context usually includes:
@@ -42,9 +42,29 @@ struct ContextSwitchFrame {
 }
 
 impl TaskContext {
+    /// Creates a dummy context for a new task.
+    ///
+    /// Note the context is not initialized, it will be filled by [`switch_to`]
+    /// (for initial tasks) and [`init`] (for regular tasks) methods.
+    ///
+    /// [`init`]: TaskContext::init
+    /// [`switch_to`]: TaskContext::switch_to
+    pub fn new() -> Self {
+        Self {
+            kstack_top: va!(0),
+            rsp: 0,
+            fs_base: 0,
+        }
+    }
+
+    /// Setup tls register
+    pub fn set_tls(&mut self, tls_area: VirtAddr) {
+        self.fs_base = tls_area.as_usize();
+    }
+
     /// Initializes the context for a new task, with the given entry point and
     /// kernel stack.
-    pub fn init(&mut self, entry: usize, kstack_top: VirtAddr, tls_area: VirtAddr) {
+    pub fn init(&mut self, entry: usize, kstack_top: VirtAddr) {
         unsafe {
             // x86_64 calling convention: the stack must be 16-byte aligned before
             // calling a function. That means when entering a new task (`ret` in `context_switch`
@@ -61,7 +81,6 @@ impl TaskContext {
             self.rsp = frame_ptr as u64;
         }
         self.kstack_top = kstack_top;
-        self.fs_base = tls_area.as_usize();
     }
 
     /// Switches to another task.

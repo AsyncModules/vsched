@@ -21,6 +21,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "autocfg"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
+
+[[package]]
 name = "bit_field"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -71,6 +77,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe4266f1bd910c087ff8c7848882217b2b079742877b21d29614c11c16087d70"
 dependencies = [
  "bitmaps",
+]
+
+[[package]]
+name = "crate_interface"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70272a03a2cef15589bac05d3d15c023752f5f8f2da8be977d983a9d9e6250fb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -135,6 +152,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "kernel_guard"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "307e6be468f3d6b6d895e191f63c11602e4e76575ecca68325d8c8dbebe2870e"
+dependencies = [
+ "cfg-if",
+ "crate_interface",
+]
+
+[[package]]
+name = "lazyinit"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17f03abfebdaaf0fad16790237a0348baf84886d3ade460db13bae59e614a180"
+
+[[package]]
 name = "libc"
 version = "0.2.174"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -159,6 +192,22 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "lock_api"
+version = "0.4.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96936507f153605bddfcda068dd804796c84324ed2510809e5b2a624c81da765"
+dependencies = [
+ "autocfg",
+ "scopeguard",
+]
+
+[[package]]
+name = "log"
+version = "0.4.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 
 [[package]]
 name = "memchr"
@@ -205,6 +254,30 @@ name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
+name = "percpu"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01e56c0c558952222967b592899f98765b48590e7bd7403bfd7075f73afc6ed6"
+dependencies = [
+ "cfg-if",
+ "kernel_guard",
+ "percpu_macros",
+ "spin",
+ "x86",
+]
+
+[[package]]
+name = "percpu_macros"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a9f4cc54a2e471ff72f1499461ba381ad4eae9cbd60d29c258545b995e406e0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "proc-macro2"
@@ -307,6 +380,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "scopeguard"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "spin"
+version = "0.9.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+dependencies = [
+ "lock_api",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -328,6 +416,30 @@ dependencies = [
  "quote",
  "unicode-ident",
 ]
+
+[[package]]
+name = "task_inner"
+version = "0.0.0"
+dependencies = [
+ "cfg-if",
+ "config",
+ "crate_interface",
+ "crossbeam",
+ "hal",
+ "kernel_guard",
+ "lazyinit",
+ "log",
+ "memory_addr 0.3.2",
+ "percpu",
+ "scheduler",
+ "timer_list",
+]
+
+[[package]]
+name = "timer_list"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "158b52ace9609dd94f4af338f4828ff23b600d9160def8c001f2c73885521936"
 
 [[package]]
 name = "tock-registers"

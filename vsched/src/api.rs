@@ -3,12 +3,12 @@ use crate::{get_data_base, percpu::PerCPU, sched::get_run_queue, select_run_queu
 use config::RQ_CAP;
 
 cfg_if::cfg_if! {
-    if #[cfg(feature = "sched_rr")] {
+    if #[cfg(feature = "sched-rr")] {
         const MAX_TIME_SLICE: usize = 5;
         pub type AxTask = scheduler::RRTask<TaskInner, MAX_TIME_SLICE>;
         pub type AxTaskRef = scheduler::RRTaskRef<TaskInner, MAX_TIME_SLICE>;
         pub type Scheduler = scheduler::RRScheduler<TaskInner, MAX_TIME_SLICE, RQ_CAP>;
-    } else if #[cfg(feature = "sched_cfs")] {
+    } else if #[cfg(feature = "sched-cfs")] {
         pub type AxTask = scheduler::CFSTask<TaskInner>;
         pub type AxTaskRef = scheduler::CFSTaskRef<TaskInner>;
         pub type Scheduler = scheduler::CFScheduler<TaskInner, RQ_CAP>;
