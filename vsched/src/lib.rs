@@ -5,7 +5,6 @@
 mod api;
 mod percpu;
 mod sched;
-#[allow(unused)]
 mod task;
 pub use api::*;
 use sched::*;

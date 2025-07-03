@@ -60,6 +60,7 @@ checksum = "9555578bc9e57714c812a1f84e4fc5b4d21fcb063490c624de019f7464c91268"
 name = "config"
 version = "0.0.0"
 dependencies = [
+ "cpumask",
  "regex",
 ]
 
@@ -106,7 +107,6 @@ dependencies = [
  "aarch64-cpu",
  "cfg-if",
  "linkme",
- "log",
  "memory_addr 0.4.0",
  "page_table_entry",
  "riscv",
@@ -159,12 +159,6 @@ dependencies = [
  "quote",
  "syn",
 ]
-
-[[package]]
-name = "log"
-version = "0.4.27"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 
 [[package]]
 name = "memchr"

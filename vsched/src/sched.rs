@@ -1,5 +1,6 @@
 use crate::api::AxTaskRef;
 use crate::percpu::PerCPU;
+use config::AxCpuMask;
 use scheduler::BaseScheduler;
 use crate::task::TaskState;
 
@@ -20,7 +21,6 @@ use crate::task::TaskState;
 ///
 /// This function will panic if `cpu_mask` is empty, indicating that there are no available CPUs for task execution.
 ///
-#[cfg(feature = "smp")]
 // The modulo operation is safe here because `axconfig::SMP` is always greater than 1 with "smp" enabled.
 #[allow(clippy::modulo_one)]
 #[inline]
@@ -83,18 +83,10 @@ pub fn get_run_queue(index: usize) -> &'static PerCPU {
 ///
 #[inline]
 pub(crate) fn select_run_queue(task: AxTaskRef) -> &'static PerCPU {
-    #[cfg(not(feature = "smp"))]
-    {
-        let _ = task;
-        // When SMP is disabled, all tasks are scheduled on the same global run queue.
-        get_run_queue(0)
-    }
-    #[cfg(feature = "smp")]
-    {
-        // When SMP is enabled, select the run queue based on the task's CPU affinity and load balance.
-        let index = select_run_queue_index(task.cpumask());
-        get_run_queue(index)
-    }
+    
+    // When SMP is enabled, select the run queue based on the task's CPU affinity and load balance.
+    let index = select_run_queue_index(task.as_ref().cpumask());
+    get_run_queue(index)
 }
 
 /// Management operations for run queue, including adding tasks, unblocking tasks, etc.
@@ -132,7 +124,6 @@ impl PerCPU {
                 // 1. This should be placed after the judgement of `TaskState::Blocked,`,
                 //    because the task may have been woken up by other cores.
                 // 2. This can be placed in the front of `switch_to()`
-                #[cfg(feature = "smp")]
                 while task.as_ref().on_cpu() {
                     // Wait for the task to finish its scheduling process.
                     core::hint::spin_loop();
@@ -171,12 +162,13 @@ impl PerCPU {
             // we just ingiore the `resched` flag.
             if resched && src_cpu_id == self.cpu_id {
                 // TODO: 增加判断当前任务的条件
-                #[cfg(feature = "preempt")]
-                get_run_queue(this_cpu_id)
+                unsafe { 
+                    get_run_queue(src_cpu_id)
                     .current_task
-                    .load()
+                    .as_ref_unchecked()
                     .as_ref()
                     .set_preempt_pending(true);
+                };
             }
         }
     }
@@ -217,7 +209,6 @@ impl PerCPU {
     }
 
     pub(crate) fn switch_to(&self, prev_task: &AxTaskRef, next_task: AxTaskRef) {
-        #[cfg(feature = "preempt")]
         next_task.as_ref().set_preempt_pending(false);
         next_task.as_ref().set_state(TaskState::Running);
         if prev_task.ptr_eq(&next_task) {
@@ -226,21 +217,17 @@ impl PerCPU {
 
         // Claim the task as running, we do this before switching to it
         // such that any running task will have this set.
-        #[cfg(feature = "smp")]
         next_task.as_ref().set_on_cpu(true);
 
         unsafe {
             let prev_ctx_ptr = prev_task.as_ref().ctx_mut_ptr();
             let next_ctx_ptr = next_task.as_ref().ctx_mut_ptr();
             // TODO:
-            // // If the next task is a coroutine, this will set the kstack and ctx.
-            // next_task.as_ref().set_kstack();
+            // If the next task is a coroutine, this will set the kstack and ctx.
+            next_task.as_ref().set_kstack();
 
             // Store the weak pointer of **prev_task** in percpu variable `PREV_TASK`.
-            #[cfg(feature = "smp")]
-            {
-                self.prev_task.replace(prev_task);
-            }
+            self.prev_task.replace(prev_task.clone());
 
             *self.current_task.as_mut_unchecked() = next_task;
             // CurrentTask::set_current(prev_task, next_task);
@@ -249,7 +236,6 @@ impl PerCPU {
 
             // Current it's **next_task** running on this CPU, clear the `prev_task`'s `on_cpu` field
             // to indicate that it has finished its scheduling process and no longer running on this CPU.
-            #[cfg(feature = "smp")]
             self.prev_task.as_ref_unchecked().as_ref().set_on_cpu(false);
         }
     }
@@ -270,13 +256,7 @@ impl PerCPU {
             next_task.as_ref().state()
         );
         let prev_task = unsafe { self.current_task.as_ref_unchecked() };
-        // Make sure that IRQs are disabled by kernel guard or other means.
-        #[cfg(all(not(test), feature = "irq"))] // Note: irq is faked under unit tests.
-        assert!(
-            !axhal::arch::irqs_enabled(),
-            "IRQs must be disabled during scheduling"
-        );
-        #[cfg(feature = "preempt")]
+        
         next_task.as_ref().set_preempt_pending(false);
         next_task.as_ref().set_state(TaskState::Running);
         if prev_task.ptr_eq(&next_task) {
@@ -285,16 +265,12 @@ impl PerCPU {
 
         // Claim the task as running, we do this before switching to it
         // such that any running task will have this set.
-        #[cfg(feature = "smp")]
         next_task.as_ref().set_on_cpu(true);
 
         unsafe {
-            // Store the weak pointer of **prev_task** in percpu variable `PREV_TASK`.
-            #[cfg(feature = "smp")]
-            {
-                self.prev_task.replace(prev_task);
-                // *PREV_TASK.current_ref_mut_raw() = Arc::downgrade(prev_task.as_task_ref());
-            }
+            
+            self.prev_task.replace(prev_task.clone());
+                
 
             // // The strong reference count of `prev_task` will be decremented by 1,
             // // but won't be dropped until `gc_entry()` is called.

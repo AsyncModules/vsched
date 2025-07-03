@@ -40,6 +40,14 @@ pub struct TaskContext {
 }
 
 impl TaskContext {
+    /// Initializes the context for a new task, with the given entry point and
+    /// kernel stack.
+    pub fn init(&mut self, entry: usize, kstack_top: VirtAddr, tls_area: VirtAddr) {
+        self.sp = kstack_top.as_usize();
+        self.ra = entry;
+        self.tp = tls_area.as_usize();
+    }
+
     /// Switches to another task.
     ///
     /// It first saves the current task's context from CPU to this place, and then

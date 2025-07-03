@@ -29,7 +29,41 @@ pub struct TaskContext {
     pub fs_base: usize,
 }
 
+#[repr(C)]
+#[derive(Debug, Default)]
+struct ContextSwitchFrame {
+    r15: u64,
+    r14: u64,
+    r13: u64,
+    r12: u64,
+    rbx: u64,
+    rbp: u64,
+    rip: u64,
+}
+
 impl TaskContext {
+    /// Initializes the context for a new task, with the given entry point and
+    /// kernel stack.
+    pub fn init(&mut self, entry: usize, kstack_top: VirtAddr, tls_area: VirtAddr) {
+        unsafe {
+            // x86_64 calling convention: the stack must be 16-byte aligned before
+            // calling a function. That means when entering a new task (`ret` in `context_switch`
+            // is executed), (stack pointer + 8) should be 16-byte aligned.
+            let frame_ptr = (kstack_top.as_mut_ptr() as *mut u64).sub(1);
+            let frame_ptr = (frame_ptr as *mut ContextSwitchFrame).sub(1);
+            core::ptr::write(
+                frame_ptr,
+                ContextSwitchFrame {
+                    rip: entry as _,
+                    ..Default::default()
+                },
+            );
+            self.rsp = frame_ptr as u64;
+        }
+        self.kstack_top = kstack_top;
+        self.fs_base = tls_area.as_usize();
+    }
+
     /// Switches to another task.
     ///
     /// It first saves the current task's context from CPU to this place, and then

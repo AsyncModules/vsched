@@ -13,7 +13,6 @@ pub(crate) struct PerCPU {
 
     pub(crate) idle_task: AxTaskRef,
     /// Stores the weak reference to the previous task that is running on this CPU.
-    #[cfg(feature = "smp")]
     pub(crate) prev_task: UnsafeCell<AxTaskRef>,
 }
 
@@ -24,7 +23,6 @@ impl PerCPU {
             scheduler: Scheduler::new(),
             current_task: UnsafeCell::new(AxTaskRef::EMPTY),
             idle_task,
-            #[cfg(feature = "smp")]
             prev_task: UnsafeCell::new(AxTaskRef::EMPTY),
         }
     }
