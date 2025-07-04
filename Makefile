@@ -7,6 +7,7 @@ TARGET_DIR ?= $(PWD)/target
 PACKEAGE = vsched
 LIB ?= libvsched
 RQ_CAP ?= 256
+UTEST ?= yield
 
 OBJDUMP = rust-objdump -t -T -r -R -d --print-imm-hex --x86-asm-syntax=intel
 OBJCOPY = rust-objcopy -X -g
@@ -53,7 +54,7 @@ endif
 	@sed 's/%ARCH%/$(ARCH)/g' linker.lds > $(LD_SCRIPT)
 	RQ_CAP=${RQ_CAP} cargo build $(build_args)
 	@$(OBJCOPY) $(OUPUT_SO) $(OUPUT_SO)
-
+	cp $(OUPUT_SO) $(LIB).so
 
 disasm: all
 	@$(OBJDUMP) $(OUPUT_SO)
@@ -61,9 +62,7 @@ disasm: all
 clean:
 	rm -rf $(TARGET_DIR)
 
-utest:
-	@echo "test in std"
-
-
+utest: all
+	cargo run --bin $(UTEST) --target $(TARGET) --target-dir $(TARGET_DIR) $(build_args-$(MODE))
 
 .PHONY: all clean 

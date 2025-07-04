@@ -1,34 +1,47 @@
-use memmap::MmapOptions;
-use std::fs;
+use base_task::{BaseTaskRef, Scheduler};
+use core::cell::UnsafeCell;
+use libloading::{Library, Symbol};
+use memmap2::MmapMut;
 
-fn map_vsched() {
-    // 需要一块内存来记录数据，还需要打开 vsched 模块
-    // All peripherals can be described by an offset from the Peripheral Base Address, which starts at:
-    // 0x20000000 on the Raspberry Pi model 1
-    // 0x3F000000 on the models 2 and 3.
-    const PERIPHERAL_BASE_ADDRESS: u64 = 0x3F000000;
+pub fn map_vsched() {
+    let _data_base = map_vsched_data().unwrap();
+    map_vsched_text().unwrap();
+}
 
-    // The System Timer is a hardware clock that can be used to keep time and generate interrupts after a certain time.
-    // It is located at offset 0x3000 from the peripheral base.
-    const SYSTEM_TIMER_OFFSET: u64 = 0x3000;
+fn map_vsched_data() -> Result<usize, usize> {
+    let data_map = MmapMut::map_anon(VSCHED_DATA_SIZE).unwrap();
+    println!("data base: {:p}", data_map.as_ptr());
+    let data_base = data_map.as_ptr() as _;
+    core::mem::forget(data_map);
+    Ok(data_base)
+}
 
-    let f = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/mem")
-        .unwrap();
+fn map_vsched_text() -> Result<usize, usize> {
+    let vsched_path = "./libvsched.so";
 
-    // Create a new memory map builder.
-    let mmap = unsafe {
-        MmapOptions::new()
-            .offset(PERIPHERAL_BASE_ADDRESS + SYSTEM_TIMER_OFFSET + 4)
-            .len(4096)
-            .map_mut(&f)
-            .unwrap()
-    };
+    let vsched_file = unsafe { Library::new(vsched_path).unwrap() };
+    let symbol: Symbol<unsafe extern "C" fn(usize)> =
+        unsafe { vsched_file.get(b"yield_now").unwrap() };
+    unsafe { symbol(0) };
+    Ok(0)
+}
 
-    let bytes = mmap.get(0..4).unwrap();
-    loop {
-        println!("{:?}", bytes);
-    }
+const VSCHED_DATA_SIZE: usize =
+    (config::SMP * core::mem::size_of::<PerCPU>() + config::PAGES_SIZE_4K - 1)
+        & (!(config::PAGES_SIZE_4K - 1));
+
+#[allow(unused)]
+struct PerCPU {
+    /// The ID of the CPU this run queue is associated with.
+    cpu_id: usize,
+    /// The core scheduler of this run queue.
+    /// Since irq and preempt are preserved by the kernel guard hold by `AxRunQueueRef`,
+    /// we just use a simple raw spin lock here.
+    scheduler: Scheduler,
+
+    current_task: UnsafeCell<BaseTaskRef>,
+
+    idle_task: BaseTaskRef,
+    /// Stores the weak reference to the previous task that is running on this CPU.
+    prev_task: UnsafeCell<BaseTaskRef>,
 }
