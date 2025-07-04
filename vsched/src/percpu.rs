@@ -1,4 +1,4 @@
-use crate::api::{AxTaskRef, Scheduler};
+use crate::api::{BaseTaskRef, Scheduler};
 use core::cell::UnsafeCell;
 
 pub(crate) struct PerCPU {
@@ -9,21 +9,21 @@ pub(crate) struct PerCPU {
     /// we just use a simple raw spin lock here.
     pub(crate) scheduler: Scheduler,
 
-    pub(crate) current_task: UnsafeCell<AxTaskRef>,
+    pub(crate) current_task: UnsafeCell<BaseTaskRef>,
 
-    pub(crate) idle_task: AxTaskRef,
+    pub(crate) idle_task: BaseTaskRef,
     /// Stores the weak reference to the previous task that is running on this CPU.
-    pub(crate) prev_task: UnsafeCell<AxTaskRef>,
+    pub(crate) prev_task: UnsafeCell<BaseTaskRef>,
 }
 
 impl PerCPU {
-    pub fn new(cpu_id: usize, idle_task: AxTaskRef) -> Self {
+    pub fn new(cpu_id: usize, idle_task: BaseTaskRef) -> Self {
         Self {
             cpu_id,
             scheduler: Scheduler::new(),
-            current_task: UnsafeCell::new(AxTaskRef::EMPTY),
+            current_task: UnsafeCell::new(BaseTaskRef::EMPTY),
             idle_task,
-            prev_task: UnsafeCell::new(AxTaskRef::EMPTY),
+            prev_task: UnsafeCell::new(BaseTaskRef::EMPTY),
         }
     }
 }

@@ -5,36 +5,36 @@ use core::mem::{align_of, size_of};
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-static __AX_TASK_EXT_SIZE: usize = 0;
+static __TASK_EXT_SIZE: usize = 0;
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-static __AX_TASK_EXT_ALIGN: usize = 0;
+static __TASK_EXT_ALIGN: usize = 0;
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
 fn __ax_task_ext_drop(_data: *mut u8) {}
 
 /// A wrapper of pointer to the task extended data.
-pub(crate) struct AxTaskExt {
+pub(crate) struct TaskExt {
     ptr: *mut u8,
 }
 
-impl AxTaskExt {
+impl TaskExt {
     /// Returns the expected size of the task extended structure.
     pub fn size() -> usize {
         unsafe extern "C" {
-            static __AX_TASK_EXT_SIZE: usize;
+            static __TASK_EXT_SIZE: usize;
         }
-        unsafe { __AX_TASK_EXT_SIZE }
+        unsafe { __TASK_EXT_SIZE }
     }
 
     /// Returns the expected alignment of the task extended structure.
     pub fn align() -> usize {
         unsafe extern "C" {
-            static __AX_TASK_EXT_ALIGN: usize;
+            static __TASK_EXT_ALIGN: usize;
         }
-        unsafe { __AX_TASK_EXT_ALIGN }
+        unsafe { __TASK_EXT_ALIGN }
     }
 
     /// Construct an empty task extended structure that contains no data
@@ -103,7 +103,7 @@ impl AxTaskExt {
     }
 }
 
-impl Drop for AxTaskExt {
+impl Drop for TaskExt {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
             unsafe extern "C" {
@@ -168,10 +168,10 @@ pub trait TaskExtMut<T: Sized> {
 macro_rules! def_task_ext {
     ($task_ext_struct:ty) => {
         #[unsafe(no_mangle)]
-        static __AX_TASK_EXT_SIZE: usize = ::core::mem::size_of::<$task_ext_struct>();
+        static __TASK_EXT_SIZE: usize = ::core::mem::size_of::<$task_ext_struct>();
 
         #[unsafe(no_mangle)]
-        static __AX_TASK_EXT_ALIGN: usize = ::core::mem::align_of::<$task_ext_struct>();
+        static __TASK_EXT_ALIGN: usize = ::core::mem::align_of::<$task_ext_struct>();
 
         #[unsafe(no_mangle)]
         fn __ax_task_ext_drop(data: *mut u8) {

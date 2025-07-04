@@ -1,5 +1,3 @@
-#![no_std]
-
 use core::cell::UnsafeCell;
 use core::cmp::Ordering as CmpOrdering;
 use core::mem::MaybeUninit;
@@ -72,6 +70,7 @@ impl AtomicSlotState {
         (state, version)
     }
 
+    #[allow(unused)]
     fn is_empty(&self) -> bool {
         let (state, _) = self.load_state_version();
         state == STATE_EMPTY
@@ -217,13 +216,11 @@ where
 
     /// 创建新的 BTreeMap
     pub const fn new() -> Self {
-        unsafe {
-            Self {
-                storage: [Self::INIT_CELL; CAPACITY],
-                slot_states: [Self::INIT_STATE; CAPACITY],
-                len: AtomicUsize::new(0),
-                global_version: AtomicUsize::new(1), // 从1开始，0表示空槽位
-            }
+        Self {
+            storage: [Self::INIT_CELL; CAPACITY],
+            slot_states: [Self::INIT_STATE; CAPACITY],
+            len: AtomicUsize::new(0),
+            global_version: AtomicUsize::new(1), // 从1开始，0表示空槽位
         }
     }
 
@@ -542,7 +539,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn test_basic_operations() {
@@ -793,7 +789,7 @@ mod concurrent_test {
             let consumer = thread::spawn(move || {
                 let mut sum = 0;
                 while flag_c.load(Ordering::SeqCst) != 0 || !c2.is_empty() {
-                    if let Some((k, v)) = c2.pop_first() {
+                    if let Some((_k, v)) = c2.pop_first() {
                         sum += v;
                     }
                 }
@@ -802,7 +798,7 @@ mod concurrent_test {
 
             let mut sum = 0;
             while flag.load(Ordering::SeqCst) != 0 || !c1.is_empty() {
-                if let Some((k, v)) = c1.pop_first() {
+                if let Some((_k, v)) = c1.pop_first() {
                     sum += v;
                 }
             }

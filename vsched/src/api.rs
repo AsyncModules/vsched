@@ -5,17 +5,17 @@ use config::RQ_CAP;
 cfg_if::cfg_if! {
     if #[cfg(feature = "sched-rr")] {
         const MAX_TIME_SLICE: usize = 5;
-        pub type AxTask = scheduler::RRTask<TaskInner, MAX_TIME_SLICE>;
-        pub type AxTaskRef = scheduler::RRTaskRef<TaskInner, MAX_TIME_SLICE>;
+        pub type BaseTask = scheduler::RRTask<TaskInner, MAX_TIME_SLICE>;
+        pub type BaseTaskRef = scheduler::RRTaskRef<TaskInner, MAX_TIME_SLICE>;
         pub type Scheduler = scheduler::RRScheduler<TaskInner, MAX_TIME_SLICE, RQ_CAP>;
     } else if #[cfg(feature = "sched-cfs")] {
-        pub type AxTask = scheduler::CFSTask<TaskInner>;
-        pub type AxTaskRef = scheduler::CFSTaskRef<TaskInner>;
+        pub type BaseTask = scheduler::CFSTask<TaskInner>;
+        pub type BaseTaskRef = scheduler::CFSTaskRef<TaskInner>;
         pub type Scheduler = scheduler::CFScheduler<TaskInner, RQ_CAP>;
     } else {
         // If no scheduler features are set, use FIFO as the default.
-        pub type AxTask = scheduler::FifoTask<TaskInner>;
-        pub type AxTaskRef = scheduler::FiFoTaskRef<TaskInner>;
+        pub type BaseTask = scheduler::FifoTask<TaskInner>;
+        pub type BaseTaskRef = scheduler::FiFoTaskRef<TaskInner>;
         pub type Scheduler = scheduler::FifoScheduler<TaskInner, RQ_CAP>;
     }
 }
@@ -26,7 +26,7 @@ cfg_if::cfg_if! {
 ///
 /// Panics if the current task is not initialized.
 #[unsafe(no_mangle)]
-pub extern "C" fn current(cpu_id: usize) -> AxTaskRef {
+pub extern "C" fn current(cpu_id: usize) -> BaseTaskRef {
     unsafe {
         crate::get_run_queue(cpu_id)
             .current_task
@@ -37,7 +37,7 @@ pub extern "C" fn current(cpu_id: usize) -> AxTaskRef {
 
 /// Initializes the task scheduler (for the primary CPU).
 #[unsafe(no_mangle)]
-pub fn init_vsched(cpu_id: usize, idle_task: AxTaskRef) {
+pub fn init_vsched(cpu_id: usize, idle_task: BaseTaskRef) {
     let per_cpu_base = get_data_base() as *mut PerCPU;
     unsafe {
         let per_cpu = per_cpu_base.add(cpu_id);
@@ -47,7 +47,7 @@ pub fn init_vsched(cpu_id: usize, idle_task: AxTaskRef) {
 
 /// Initializes the task scheduler for secondary CPUs.
 #[unsafe(no_mangle)]
-pub fn init_vsched_secondary(cpu_id: usize, idle_task: AxTaskRef) {
+pub fn init_vsched_secondary(cpu_id: usize, idle_task: BaseTaskRef) {
     let per_cpu_base = get_data_base() as *mut PerCPU;
     unsafe {
         let per_cpu = per_cpu_base.add(cpu_id);
@@ -62,7 +62,7 @@ pub fn init_vsched_secondary(cpu_id: usize, idle_task: AxTaskRef) {
 ///
 /// Returns the task reference.
 #[unsafe(no_mangle)]
-pub extern "C" fn spawn(task_ref: AxTaskRef) {
+pub extern "C" fn spawn(task_ref: BaseTaskRef) {
     select_run_queue(task_ref.clone()).add_task(task_ref);
 }
 
@@ -93,7 +93,7 @@ pub extern "C" fn resched(cpu_id: usize) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn switch_to(cpu_id: usize, prev_task: &AxTaskRef, next_task: AxTaskRef) {
+pub extern "C" fn switch_to(cpu_id: usize, prev_task: &BaseTaskRef, next_task: BaseTaskRef) {
     get_run_queue(cpu_id).switch_to(prev_task, next_task)
 }
 
@@ -105,7 +105,7 @@ pub extern "C" fn resched_f(cpu_id: usize) -> bool {
 /// Wake up a task to the distination cpu,
 #[unsafe(no_mangle)]
 pub extern "C" fn unblock_task(
-    task: AxTaskRef,
+    task: BaseTaskRef,
     resched: bool,
     src_cpu_id: usize,
     dst_cpu_id: usize,

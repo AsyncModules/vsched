@@ -1,5 +1,5 @@
 [package]
-name = "task_inner"
+name = "base_task"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

@@ -1,6 +1,6 @@
-#[allow(unused)]
+#![cfg_attr(not(test), no_std)]
+
 mod deque;
 pub use deque::LockFreeDeque;
-#[allow(unused)]
 mod btreemap;
 pub use btreemap::LockFreeBTreeMap;

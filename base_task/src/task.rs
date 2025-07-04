@@ -7,8 +7,8 @@ use memory_addr::VirtAddr;
 
 use hal::TaskContext;
 
-use crate::task_ext::AxTaskExt;
-use crate::{AxTask, AxTaskRef};
+use crate::task_ext::TaskExt;
+use crate::{BaseTask, BaseTaskRef};
 use config::AxCpuMask;
 
 /// A unique identifier for a thread.
@@ -45,7 +45,7 @@ pub struct TaskInner {
     ctx: UnsafeCell<TaskContext>,
     alloc_stack: Option<usize>,
     coroutine_schedule: Option<usize>,
-    task_ext: AxTaskExt,
+    task_ext: TaskExt,
 }
 
 impl TaskId {
@@ -177,7 +177,7 @@ impl TaskInner {
             ctx: UnsafeCell::new(TaskContext::new()),
             alloc_stack: None,
             coroutine_schedule: None,
-            task_ext: AxTaskExt::empty(),
+            task_ext: TaskExt::empty(),
         }
     }
 
@@ -196,8 +196,8 @@ impl TaskInner {
         t
     }
 
-    pub fn into_ref(self) -> AxTaskRef {
-        AxTaskRef::new(NonNull::new(Arc::into_raw(Arc::new(AxTask::new(self))) as _).unwrap())
+    pub fn into_ref(self) -> BaseTaskRef {
+        BaseTaskRef::new(NonNull::new(Arc::into_raw(Arc::new(BaseTask::new(self))) as _).unwrap())
     }
 
     #[inline]

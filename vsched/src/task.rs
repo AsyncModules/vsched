@@ -41,7 +41,7 @@ pub struct TaskInner {
     alloc_stack: Option<usize>,
     coroutine_schedule: Option<usize>,
     #[allow(unused)]
-    task_ext: AxTaskExt,
+    task_ext: TaskExt,
 }
 
 impl From<u8> for TaskState {
@@ -207,7 +207,7 @@ impl TaskStack {
 }
 
 /// A wrapper of pointer to the task extended data.
-pub(crate) struct AxTaskExt {
+pub(crate) struct TaskExt {
     #[allow(unused)]
     ptr: *mut u8,
 }

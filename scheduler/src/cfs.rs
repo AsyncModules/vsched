@@ -1,10 +1,10 @@
 use crossbeam::atomic::AtomicCell;
 
-use crate::utils::LockFreeBTreeMap;
 use crate::BaseScheduler;
 use core::ops::Deref;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicIsize, Ordering};
+use utils::LockFreeBTreeMap;
 
 /// task for CFS
 pub struct CFSTask<T> {

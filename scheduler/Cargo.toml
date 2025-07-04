@@ -12,3 +12,4 @@ documentation = "https://arceos-org.github.io/scheduler"
 [dependencies]
 heapless = { version = "0.8", features = ["mpmc_large"] }
 crossbeam = { version = "0.8", default-features = false }
+utils = { workspace = true }

@@ -1,6 +1,5 @@
 use memmap::MmapOptions;
 use std::fs;
-use std::io::Write;
 
 fn map_vsched() {
     // 需要一块内存来记录数据，还需要打开 vsched 模块

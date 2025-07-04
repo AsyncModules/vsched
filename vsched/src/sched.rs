@@ -1,4 +1,4 @@
-use crate::api::AxTaskRef;
+use crate::api::BaseTaskRef;
 use crate::percpu::PerCPU;
 use config::AxCpuMask;
 use scheduler::BaseScheduler;
@@ -82,7 +82,7 @@ pub fn get_run_queue(index: usize) -> &'static PerCPU {
 /// 2. Use a more generic load balancing algorithm that can be customized or replaced.
 ///
 #[inline]
-pub(crate) fn select_run_queue(task: AxTaskRef) -> &'static PerCPU {
+pub(crate) fn select_run_queue(task: BaseTaskRef) -> &'static PerCPU {
     
     // When SMP is enabled, select the run queue based on the task's CPU affinity and load balance.
     let index = select_run_queue_index(task.as_ref().cpumask());
@@ -100,7 +100,7 @@ impl PerCPU {
     /// otherwise `false`.
     fn put_task_with_state(
         &self,
-        task: &AxTaskRef,
+        task: &BaseTaskRef,
         current_state: TaskState,
         preempt: bool,
     ) -> bool {
@@ -140,7 +140,7 @@ impl PerCPU {
     /// Adds a task to the scheduler.
     ///
     /// This function is used to add a new task to the scheduler.
-    pub fn add_task(&self, task: AxTaskRef) {
+    pub fn add_task(&self, task: BaseTaskRef) {
         assert!(task.as_ref().is_ready());
         self.scheduler.add_task(task);
     }
@@ -149,7 +149,7 @@ impl PerCPU {
     ///
     /// This function does nothing if the task is not in [`TaskState::Blocked`],
     /// which means the task is already unblocked by other cores.
-    pub fn unblock_task(&self, task: AxTaskRef, resched: bool, src_cpu_id: usize) {
+    pub fn unblock_task(&self, task: BaseTaskRef, resched: bool, src_cpu_id: usize) {
         let _task_id = task.as_ref().id();
         // Try to change the state of the task from `Blocked` to `Ready`,
         // if successful, the task will be put into this run queue,
@@ -208,7 +208,7 @@ impl PerCPU {
         self.switch_to(unsafe { self.current_task.as_ref_unchecked() }, next);
     }
 
-    pub(crate) fn switch_to(&self, prev_task: &AxTaskRef, next_task: AxTaskRef) {
+    pub(crate) fn switch_to(&self, prev_task: &BaseTaskRef, next_task: BaseTaskRef) {
         next_task.as_ref().set_preempt_pending(false);
         next_task.as_ref().set_state(TaskState::Running);
         if prev_task.ptr_eq(&next_task) {

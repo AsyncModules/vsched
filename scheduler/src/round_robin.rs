@@ -1,8 +1,8 @@
-use crate::utils::LockFreeDeque;
 use crate::BaseScheduler;
 use core::ops::Deref;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicIsize, Ordering};
+use utils::LockFreeDeque;
 
 /// A task wrapper for the [`RRScheduler`].
 ///
