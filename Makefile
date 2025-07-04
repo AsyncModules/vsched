@@ -8,6 +8,7 @@ PACKEAGE = vsched
 LIB ?= libvsched
 RQ_CAP ?= 256
 UTEST ?= yield
+UTEST_BIN ?= $(TARGET_DIR)/$(TARGET)/$(MODE)/$(UTEST)
 
 OBJDUMP = rust-objdump -t -T -r -R -d --print-imm-hex --x86-asm-syntax=intel
 OBJCOPY = rust-objcopy -X -g
@@ -63,6 +64,8 @@ clean:
 	rm -rf $(TARGET_DIR)
 
 utest: all
-	cargo run --bin $(UTEST) --target $(TARGET) --target-dir $(TARGET_DIR) $(build_args-$(MODE))
+	RUST_BACKTRACE=1 RUSTFLAGS='-C target-feature=+crt-static' cargo build --bin $(UTEST) --target $(TARGET) --target-dir $(TARGET_DIR) $(build_args-$(MODE))
+	qemu-$(ARCH) $(UTEST_BIN)
+  
 
 .PHONY: all clean 
