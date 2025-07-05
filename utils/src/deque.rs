@@ -1,5 +1,5 @@
 //! Satety:
-//!     The `pop_back` operation in the MPMC situation will cause error.
+//!     Work when the queue is full in the MPMC situation will cause error.
 
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
@@ -51,6 +51,10 @@ impl<T, const CAPACITY: usize> LockFreeDeque<T, CAPACITY> {
         loop {
             let head = self.head.load(Ordering::Acquire);
             let tail = self.tail.load(Ordering::Acquire);
+            let head_ = self.head.load(Ordering::Acquire);
+            if head_ != head {
+                continue;
+            }
 
             // Calculate the new head position (moving backwards)
             let new_head = if head == 0 { CAPACITY - 1 } else { head - 1 };
@@ -117,8 +121,12 @@ impl<T, const CAPACITY: usize> LockFreeDeque<T, CAPACITY> {
     /// Returns Err(item) if the deque is full
     pub fn push_back(&self, item: T) -> Result<(), T> {
         loop {
-            let head = self.head.load(Ordering::Acquire);
             let tail = self.tail.load(Ordering::Acquire);
+            let head = self.head.load(Ordering::Acquire);
+            let tail_ = self.tail.load(Ordering::Acquire);
+            if tail_ != tail {
+                continue;
+            }
 
             // Calculate the new tail position
             let new_tail = (tail + 1) % CAPACITY;
@@ -187,6 +195,10 @@ impl<T, const CAPACITY: usize> LockFreeDeque<T, CAPACITY> {
         loop {
             let head = self.head.load(Ordering::Acquire);
             let tail = self.tail.load(Ordering::Acquire);
+            let head_ = self.head.load(Ordering::Acquire);
+            if head_ != head {
+                continue;
+            }
 
             // Check if queue is empty
             if head == tail {
@@ -253,8 +265,12 @@ impl<T, const CAPACITY: usize> LockFreeDeque<T, CAPACITY> {
     /// Returns None if the deque is empty
     pub fn pop_back(&self) -> Option<T> {
         loop {
-            let head = self.head.load(Ordering::Acquire);
             let tail = self.tail.load(Ordering::Acquire);
+            let head = self.head.load(Ordering::Acquire);
+            let tail_ = self.tail.load(Ordering::Acquire);
+            if tail_ != tail {
+                continue;
+            }
 
             // Check if queue is empty
             if head == tail {
@@ -321,8 +337,14 @@ impl<T, const CAPACITY: usize> LockFreeDeque<T, CAPACITY> {
 
     /// Get the current length of the deque (approximate in concurrent scenarios)
     pub fn len(&self) -> usize {
-        let head = self.head.load(Ordering::Acquire);
-        let tail = self.tail.load(Ordering::Acquire);
+        let (head, tail) = loop {
+            let head = self.head.load(Ordering::Acquire);
+            let tail = self.tail.load(Ordering::Acquire);
+            let head_ = self.head.load(Ordering::Acquire);
+            if head_ == head {
+                break (head, tail);
+            }
+        };
 
         if tail >= head {
             tail - head
@@ -333,7 +355,15 @@ impl<T, const CAPACITY: usize> LockFreeDeque<T, CAPACITY> {
 
     /// Check if the deque is empty (approximate in concurrent scenarios)
     pub fn is_empty(&self) -> bool {
-        self.head.load(Ordering::Acquire) == self.tail.load(Ordering::Acquire)
+        let (head, tail) = loop {
+            let head = self.head.load(Ordering::Acquire);
+            let tail = self.tail.load(Ordering::Acquire);
+            let head_ = self.head.load(Ordering::Acquire);
+            if head_ == head {
+                break (head, tail);
+            }
+        };
+        head == tail
     }
 
     /// Get the capacity of the deque
@@ -651,19 +681,34 @@ mod tests {
 
             let producer1 = thread::spawn(move || {
                 for i in 0..pad {
-                    let _ = p1.push_front(i);
+                    if let Err(item) = p1.push_front(i) {
+                        println!("Failed to push front {}", item);
+                    }
+                    // if let Err(item) = p1.push_back(i) {
+                    //     println!("Failed to push back {}", item);
+                    // }
                 }
                 flag1.fetch_sub(1, Ordering::SeqCst);
             });
             let producer2 = thread::spawn(move || {
                 for i in pad..(2 * pad) {
-                    let _ = p2.push_back(i);
+                    // if let Err(item) = p2.push_front(i) {
+                    //     println!("Failed to push front {}", item);
+                    // }
+                    if let Err(item) = p2.push_back(i) {
+                        println!("Failed to push back {}", item);
+                    }
                 }
                 flag2.fetch_sub(1, Ordering::SeqCst);
             });
             let producer3 = thread::spawn(move || {
                 for i in (2 * pad)..(3 * pad) {
-                    let _ = p3.push_front(i);
+                    if let Err(item) = p3.push_front(i) {
+                        println!("Failed to push front {}", item);
+                    }
+                    // if let Err(item) = p3.push_back(i) {
+                    //     println!("Failed to push back {}", item);
+                    // }
                 }
                 flag3.fetch_sub(1, Ordering::SeqCst);
             });
@@ -672,6 +717,7 @@ mod tests {
                 let mut sum = 0;
                 while flag_c.load(Ordering::SeqCst) != 0 || !c2.is_empty() {
                     if let Some(num) = c2.pop_front() {
+                        // if let Some(num) = c2.pop_back() {
                         sum += num;
                     }
                 }
@@ -680,7 +726,86 @@ mod tests {
 
             let mut sum = 0;
             while flag.load(Ordering::SeqCst) != 0 || !c1.is_empty() {
-                if let Some(num) = c1.pop_front() {
+                // if let Some(num) = c1.pop_front() {
+                if let Some(num) = c1.pop_back() {
+                    sum += num;
+                }
+            }
+
+            producer1.join().unwrap();
+            producer2.join().unwrap();
+            producer3.join().unwrap();
+
+            let s = consumer.join().unwrap();
+            sum += s;
+            assert_eq!(sum, (0..(3 * pad)).sum());
+        }
+    }
+
+    // currently, this test will deadlock because of an unsolved bug.
+    #[test]
+    fn test_mpmc_full_mix() {
+        let mut count = 10000;
+        while count > 0 {
+            count -= 1;
+            let pad = 1000usize;
+
+            let flag = Arc::new(AtomicI32::new(3));
+            let flag_c = flag.clone();
+            let flag1 = flag.clone();
+            let flag2 = flag.clone();
+            let flag3 = flag.clone();
+
+            let p1 = Arc::new(LockFreeDeque::<usize, 4096>::new());
+            let p2 = p1.clone();
+            let p3 = p1.clone();
+            let c1 = p1.clone();
+            let c2 = p1.clone();
+
+            // Fill the deque until it is full
+            for _ in 0..4095 {
+                if let Err(item) = p1.push_front(0) {
+                    println!("Failed to push front {}", item);
+                }
+            }
+
+            let producer1 = thread::spawn(move || {
+                for i in 0..pad {
+                    while p1.push_front(i).is_err() {}
+                    // while p1.push_back(i).is_err() {}
+                }
+                flag1.fetch_sub(1, Ordering::SeqCst);
+            });
+            let producer2 = thread::spawn(move || {
+                for i in pad..(2 * pad) {
+                    // while p2.push_front(i).is_err() {}
+                    while p2.push_back(i).is_err() {}
+                }
+                flag2.fetch_sub(1, Ordering::SeqCst);
+            });
+            let producer3 = thread::spawn(move || {
+                for i in (2 * pad)..(3 * pad) {
+                    while p3.push_front(i).is_err() {}
+                    // while p3.push_back(i).is_err() {}
+                }
+                flag3.fetch_sub(1, Ordering::SeqCst);
+            });
+
+            let consumer = thread::spawn(move || {
+                let mut sum = 0;
+                while flag_c.load(Ordering::SeqCst) != 0 || !c2.is_empty() {
+                    if let Some(num) = c2.pop_front() {
+                        // if let Some(num) = c2.pop_back() {
+                        sum += num;
+                    }
+                }
+                sum
+            });
+
+            let mut sum = 0;
+            while flag.load(Ordering::SeqCst) != 0 || !c1.is_empty() {
+                // if let Some(num) = c1.pop_front() {
+                if let Some(num) = c1.pop_back() {
                     sum += num;
                 }
             }
