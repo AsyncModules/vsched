@@ -1,0 +1,19 @@
+[package]
+name = "vsched_apis"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+log = "0.4"
+base_task = { workspace = true }
+xmas-elf = "0.9.0"
+
+[build-dependencies]
+regex = "1.8.5"

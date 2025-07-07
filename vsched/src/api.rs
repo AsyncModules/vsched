@@ -37,7 +37,7 @@ pub extern "C" fn current(cpu_id: usize) -> BaseTaskRef {
 
 /// Initializes the task scheduler (for the primary CPU).
 #[unsafe(no_mangle)]
-pub fn init_vsched(cpu_id: usize, idle_task: BaseTaskRef) {
+pub extern "C" fn init_vsched(cpu_id: usize, idle_task: BaseTaskRef) {
     let per_cpu_base = get_data_base() as *mut PerCPU;
     unsafe {
         let per_cpu = per_cpu_base.add(cpu_id);
@@ -47,7 +47,7 @@ pub fn init_vsched(cpu_id: usize, idle_task: BaseTaskRef) {
 
 /// Initializes the task scheduler for secondary CPUs.
 #[unsafe(no_mangle)]
-pub fn init_vsched_secondary(cpu_id: usize, idle_task: BaseTaskRef) {
+pub extern "C" fn init_vsched_secondary(cpu_id: usize, idle_task: BaseTaskRef) {
     let per_cpu_base = get_data_base() as *mut PerCPU;
     unsafe {
         let per_cpu = per_cpu_base.add(cpu_id);
@@ -76,7 +76,7 @@ pub extern "C" fn spawn(task_ref: BaseTaskRef) {
 ///
 /// [CFS]: https://en.wikipedia.org/wiki/Completely_Fair_Scheduler
 #[unsafe(no_mangle)]
-pub fn set_priority(prio: isize, cpu_id: usize) -> bool {
+pub extern "C" fn set_priority(prio: isize, cpu_id: usize) -> bool {
     get_run_queue(cpu_id).set_current_priority(prio)
 }
 
