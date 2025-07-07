@@ -1,4 +1,3 @@
-use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use core::{alloc::Layout, cell::UnsafeCell, fmt, ptr::NonNull};
 use crossbeam::atomic::AtomicCell;
@@ -8,7 +7,6 @@ use memory_addr::VirtAddr;
 use hal::TaskContext;
 
 use crate::task_ext::TaskExt;
-use crate::{BaseTask, BaseTaskRef};
 use config::AxCpuMask;
 
 /// A unique identifier for a thread.
@@ -194,10 +192,6 @@ impl TaskInner {
         t.is_init = true;
         t.set_on_cpu(true);
         t
-    }
-
-    pub fn into_ref(self) -> BaseTaskRef {
-        BaseTaskRef::new(NonNull::new(Arc::into_raw(Arc::new(BaseTask::new(self))) as _).unwrap())
     }
 
     #[inline]

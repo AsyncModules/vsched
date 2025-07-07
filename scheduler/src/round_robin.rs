@@ -50,6 +50,8 @@ pub struct RRTaskRef<T, const S: usize> {
     inner: NonNull<RRTask<T, S>>,
 }
 
+unsafe impl<T, const S: usize> Send for RRTaskRef<T, S> {}
+
 impl<T, const S: usize> Clone for RRTaskRef<T, S> {
     fn clone(&self) -> Self {
         Self { inner: self.inner }

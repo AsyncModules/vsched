@@ -4,14 +4,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
+const VSCHED_API_PATH: &str = "../vsched/src/api.rs";
+
 fn main() {
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let out_path = Path::new(&out_dir).join("api.rs");
+    println!("cargo:rerun-if-changed={}", VSCHED_API_PATH);
     build_vsched_api(out_path);
 }
 
 fn build_vsched_api(out_path: PathBuf) {
-    const VSCHED_API_PATH: &str = "../vsched/src/api.rs";
     let vsched_api_file_content = fs::read_to_string(VSCHED_API_PATH).unwrap();
     let re = regex::Regex::new(
         r#"#\[unsafe\(no_mangle\)\]\npub extern \"C\" fn ([a-zA-Z0-9_]?.*)(\([a-zA-Z0-9_:]?.*\)[->]?.*) \{"#,

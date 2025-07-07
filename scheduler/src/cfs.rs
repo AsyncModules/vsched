@@ -107,6 +107,8 @@ pub struct CFSTaskRef<T> {
     inner: NonNull<CFSTask<T>>,
 }
 
+unsafe impl<T> Send for CFSTaskRef<T> {}
+
 impl<T> Clone for CFSTaskRef<T> {
     fn clone(&self) -> Self {
         Self { inner: self.inner }

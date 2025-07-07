@@ -29,7 +29,7 @@ hal = { workspace = true }
 config = { workspace = true }
 percpu = { version = "0.2", optional = true }
 lazyinit = { version = "0.2", optional = true }
-memory_addr = { version = "0.3" }
+memory_addr = { version = "0.4" }
 timer_list = { version = "0.1" }
 kernel_guard = { version = "0.1" }
 crate_interface = { version = "0.1" }

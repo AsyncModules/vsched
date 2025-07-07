@@ -4,8 +4,10 @@ use core::cell::UnsafeCell;
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering;
 use core::sync::atomic::{AtomicBool, AtomicI32};
+use std::ptr::NonNull;
+use std::sync::Arc;
 
-use base_task::{BaseTask, TaskExtRef, TaskState};
+use base_task::{BaseTask, BaseTaskRef, TaskExtRef, TaskInner, TaskStack, TaskState};
 
 /// Task extended data for the monolithic kernel.
 pub struct TaskExt {
@@ -25,8 +27,7 @@ pub struct TaskExt {
     exit_code: AtomicI32,
     wait_for_exit: WaitQueue,
     /// The future of coroutine task.
-    pub(crate) future:
-        UnsafeCell<Option<core::pin::Pin<Box<dyn Future<Output = ()> + Send + 'static>>>>,
+    pub future: UnsafeCell<Option<core::pin::Pin<Box<dyn Future<Output = ()> + Send + 'static>>>>,
 }
 
 impl TaskExt {
@@ -84,9 +85,23 @@ impl TaskExt {
     }
 
     /// Notify all tasks that join on this task.
-    pub(crate) fn notify_exit(&self, exit_code: i32) {
+    pub fn notify_exit(&self, exit_code: i32) {
         self.exit_code.store(exit_code, Ordering::Release);
         self.wait_for_exit.notify_all(false);
+    }
+
+    pub fn new<F>(entry: F, name: String) -> Self
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        Self {
+            name,
+            entry: Some(Box::into_raw(Box::new(entry))),
+            in_wait_queue: AtomicBool::new(false),
+            exit_code: AtomicI32::new(0),
+            wait_for_exit: WaitQueue::new(),
+            future: UnsafeCell::new(None),
+        }
     }
 }
 
@@ -112,14 +127,43 @@ impl Task {
         Some(self.task_ext_().exit_code.load(Ordering::Acquire))
     }
 
-    /// Wait for the task to exit, and return the exit code.
-    ///
-    /// It will return immediately if the task has already exited (but not dropped).
-    pub async fn join_f(&self) -> Option<i32> {
-        self.task_ext_()
-            .wait_for_exit
-            .wait_until_f(|| self.inner.state() == TaskState::Exited)
-            .await;
-        Some(self.task_ext_().exit_code.load(Ordering::Acquire))
+    // /// Wait for the task to exit, and return the exit code.
+    // ///
+    // /// It will return immediately if the task has already exited (but not dropped).
+    // pub async fn join_f(&self) -> Option<i32> {
+    //     self.task_ext_()
+    //         .wait_for_exit
+    //         .wait_until_f(|| self.inner.state() == TaskState::Exited)
+    //         .await;
+    //     Some(self.task_ext_().exit_code.load(Ordering::Acquire))
+    // }
+
+    pub fn new<F>(entry: F, name: String, stack_size: usize) -> Self
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let mut t = TaskInner::new();
+        t.init_task_ext(TaskExt::new(entry, name));
+        unsafe {
+            *t.kernel_stack() = Some(TaskStack::alloc(stack_size));
+        }
+        let kstack_top = t.kernel_stack_top().unwrap();
+        t.ctx_mut().init(task_entry as usize, kstack_top);
+
+        Self {
+            inner: BaseTask::new(t),
+        }
     }
+
+    pub fn into_ref(self) -> BaseTaskRef {
+        BaseTaskRef::new(NonNull::new(Arc::into_raw(Arc::new(self)) as _).unwrap())
+    }
+}
+
+extern "C" fn task_entry() {
+    let task = vsched_apis::current(0);
+    if let Some(entry) = task.as_ref().task_ext().entry {
+        unsafe { Box::from_raw(entry)() };
+    }
+    crate::vsched::exit(0);
 }

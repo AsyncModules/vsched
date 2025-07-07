@@ -1,7 +1,9 @@
 extern crate alloc;
 
-// mod task;
+mod task;
 mod vsched;
-// mod wait_queue;
+mod wait_queue;
 
+pub use task::*;
 pub use vsched::*;
+pub use wait_queue::*;

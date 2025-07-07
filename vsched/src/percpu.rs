@@ -21,7 +21,7 @@ impl PerCPU {
         Self {
             cpu_id,
             scheduler: Scheduler::new(),
-            current_task: UnsafeCell::new(BaseTaskRef::EMPTY),
+            current_task: UnsafeCell::new(idle_task.clone()),
             idle_task,
             prev_task: UnsafeCell::new(BaseTaskRef::EMPTY),
         }

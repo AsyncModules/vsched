@@ -1,11 +1,15 @@
-use base_task::{BaseTaskRef, Scheduler};
+use base_task::{BaseTaskRef, Scheduler, TaskExtRef};
 use core::cell::UnsafeCell;
 use core::str::from_utf8;
 use memmap2::MmapMut;
 use page_table_entry::MappingFlags;
+use std::collections::VecDeque;
 use std::io::Read;
+use std::sync::Mutex;
 pub use vsched_apis::*;
 use xmas_elf::program::SegmentData;
+
+use crate::{WaitQueue, WaitQueueGuard};
 
 const VSCHED: &[u8] = core::include_bytes!("../../libvsched.so");
 
@@ -93,9 +97,37 @@ pub fn map_vsched() -> Result<Vsched, ()> {
     Ok(Vsched { map: vsched_map })
 }
 
-#[test]
-fn test_dyn_lib() {
-    map_vsched().unwrap();
+pub fn blocked_resched(mut wq_guard: WaitQueueGuard) {
+    let curr = vsched_apis::current(0);
+    assert!(curr.as_ref().is_running());
+    assert!(!curr.as_ref().is_idle());
+
+    curr.as_ref().set_state(base_task::TaskState::Blocked);
+    curr.as_ref().task_ext().set_in_wait_queue(true);
+    wq_guard.push_back(curr.clone());
+    drop(wq_guard);
+
+    log::debug!("task blocked {:?}", curr);
+    vsched_apis::resched(0);
+}
+
+static EXITED_TASKS: Mutex<VecDeque<BaseTaskRef>> = Mutex::new(VecDeque::new());
+static WAIT_FOR_EXIT: WaitQueue = WaitQueue::new();
+
+pub fn exit(exit_code: i32) -> ! {
+    let curr = vsched_apis::current(0);
+    assert!(curr.as_ref().is_running());
+    assert!(!curr.as_ref().is_idle());
+    if curr.as_ref().is_init() {
+        EXITED_TASKS.lock().unwrap().clear();
+    } else {
+        curr.as_ref().set_state(base_task::TaskState::Exited);
+        curr.as_ref().task_ext().notify_exit(exit_code);
+        EXITED_TASKS.lock().unwrap().push_back(curr);
+        WAIT_FOR_EXIT.notify_one(false);
+    }
+    vsched_apis::resched(0);
+    unreachable!()
 }
 
 const VSCHED_DATA_SIZE: usize =

@@ -103,12 +103,8 @@ pub extern "C" fn resched_f(cpu_id: usize) -> bool {
 }
 
 /// Wake up a task to the distination cpu,
+#[rustfmt::skip]
 #[unsafe(no_mangle)]
-pub extern "C" fn unblock_task(
-    task: BaseTaskRef,
-    resched: bool,
-    src_cpu_id: usize,
-    dst_cpu_id: usize,
-) {
+pub extern "C" fn unblock_task(task: BaseTaskRef, resched: bool, src_cpu_id: usize, dst_cpu_id: usize) {
     get_run_queue(dst_cpu_id).unblock_task(task, resched, src_cpu_id);
 }

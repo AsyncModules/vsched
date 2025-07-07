@@ -55,7 +55,7 @@ dependencies = [
  "kernel_guard",
  "lazyinit",
  "log",
- "memory_addr 0.3.2",
+ "memory_addr 0.4.0",
  "percpu",
  "scheduler",
  "timer_list",

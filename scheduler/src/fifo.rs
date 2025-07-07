@@ -34,6 +34,8 @@ pub struct FiFoTaskRef<T> {
     inner: NonNull<FifoTask<T>>,
 }
 
+unsafe impl<T> Send for FiFoTaskRef<T> {}
+
 impl<T> Clone for FiFoTaskRef<T> {
     fn clone(&self) -> Self {
         Self { inner: self.inner }

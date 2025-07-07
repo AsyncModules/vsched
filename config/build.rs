@@ -1,5 +1,3 @@
-use std::fs;
-use std::io::Write;
 use std::path::Path;
 
 fn main() {
@@ -16,12 +14,7 @@ pub const SMP: usize = {};
 "#,
         rq_cap, smp
     );
-    let mut f = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .open(out_path)
-        .unwrap();
-    f.write_all(mut_cfg.as_bytes()).unwrap();
+    std::fs::write(out_path, mut_cfg).unwrap();
 
     println!("cargo:rerun-if-changed=src/*");
 }

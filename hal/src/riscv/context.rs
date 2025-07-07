@@ -68,9 +68,9 @@ impl TaskContext {
     /// It first saves the current task's context from CPU to this place, and then
     /// restores the next task's context from `next_ctx` to CPU.
     pub fn switch_to(&mut self, next_ctx: &Self) {
-        self.tp = super::asm::read_thread_pointer();
+        // self.tp = super::asm::read_thread_pointer();
         unsafe {
-            super::asm::write_thread_pointer(next_ctx.tp);
+            // super::asm::write_thread_pointer(next_ctx.tp);
             // TODO: switch FP states
             context_switch(self, next_ctx)
         }

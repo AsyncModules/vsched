@@ -76,17 +76,19 @@ impl WaitQueue {
     /// Blocks the current task and put it into the wait queue, until other task
     /// notifies it.
     pub fn wait(&self) {
-        current_run_queue::<NoPreemptIrqSave>().blocked_resched(self.queue.lock());
-        self.cancel_events(crate::current(), false);
+        let wq = self.queue.lock().unwrap();
+        let curr = vsched_apis::current(0);
+        crate::vsched::blocked_resched(wq);
+        self.cancel_events(curr, false);
     }
 
-    /// Blocks the current coroutine task and put it into the wait queue, until other task
-    /// notifies it.
-    pub async fn wait_f(&self) {
-        let rq = current_run_queue::<NoPreemptIrqSave>();
-        crate::run_queue::BlockedReschedFuture::new(rq, self).await;
-        self.cancel_events(crate::current(), false);
-    }
+    // /// Blocks the current coroutine task and put it into the wait queue, until other task
+    // /// notifies it.
+    // pub async fn wait_f(&self) {
+    //     let rq = current_run_queue::<NoPreemptIrqSave>();
+    //     crate::run_queue::BlockedReschedFuture::new(rq, self).await;
+    //     self.cancel_events(crate::current(), false);
+    // }
 
     /// Blocks the current task and put it into the wait queue, until the given
     /// `condition` becomes true.
@@ -97,162 +99,161 @@ impl WaitQueue {
     where
         F: Fn() -> bool,
     {
-        let curr = crate::current();
+        let curr = vsched_apis::current(0);
         loop {
-            let mut rq = current_run_queue::<NoPreemptIrqSave>();
-            let wq = self.queue.lock();
+            let wq = self.queue.lock().unwrap();
             if condition() {
                 break;
             }
-            rq.blocked_resched(wq);
+            crate::vsched::blocked_resched(wq);
             // Preemption may occur here.
         }
         self.cancel_events(curr, false);
     }
 
-    /// Blocks the current coroutine task and put it into the wait queue, until the given
-    /// `condition` becomes true.
-    ///
-    /// Note that even other tasks notify this task, it will not wake up until
-    /// the condition becomes true.
-    pub async fn wait_until_f<F>(&self, condition: F)
-    where
-        F: Fn() -> bool,
-    {
-        let curr = crate::current();
-        loop {
-            let rq = current_run_queue::<NoPreemptIrqSave>();
-            if condition() {
-                break;
-            }
-            crate::run_queue::BlockedReschedFuture::new(rq, self).await;
-            // Preemption may occur here.
-        }
-        self.cancel_events(curr, false);
-    }
+    // /// Blocks the current coroutine task and put it into the wait queue, until the given
+    // /// `condition` becomes true.
+    // ///
+    // /// Note that even other tasks notify this task, it will not wake up until
+    // /// the condition becomes true.
+    // pub async fn wait_until_f<F>(&self, condition: F)
+    // where
+    //     F: Fn() -> bool,
+    // {
+    //     let curr = crate::current();
+    //     loop {
+    //         let rq = current_run_queue::<NoPreemptIrqSave>();
+    //         if condition() {
+    //             break;
+    //         }
+    //         crate::run_queue::BlockedReschedFuture::new(rq, self).await;
+    //         // Preemption may occur here.
+    //     }
+    //     self.cancel_events(curr, false);
+    // }
 
-    /// Blocks the current task and put it into the wait queue, until other tasks
-    /// notify it, or the given duration has elapsed.
-    #[cfg(feature = "irq")]
-    pub fn wait_timeout(&self, dur: core::time::Duration) -> bool {
-        let mut rq = current_run_queue::<NoPreemptIrqSave>();
-        let curr = crate::current();
-        let deadline = axhal::time::wall_time() + dur;
-        debug!(
-            "task wait_timeout: {} deadline={:?}",
-            curr.id_name(),
-            deadline
-        );
-        crate::timers::set_alarm_wakeup(deadline, curr.clone());
+    // /// Blocks the current task and put it into the wait queue, until other tasks
+    // /// notify it, or the given duration has elapsed.
+    // #[cfg(feature = "irq")]
+    // pub fn wait_timeout(&self, dur: core::time::Duration) -> bool {
+    //     let mut rq = current_run_queue::<NoPreemptIrqSave>();
+    //     let curr = crate::current();
+    //     let deadline = axhal::time::wall_time() + dur;
+    //     debug!(
+    //         "task wait_timeout: {} deadline={:?}",
+    //         curr.id_name(),
+    //         deadline
+    //     );
+    //     crate::timers::set_alarm_wakeup(deadline, curr.clone());
 
-        rq.blocked_resched(self.queue.lock());
+    //     rq.blocked_resched(self.queue.lock());
 
-        let timeout = curr.in_wait_queue(); // still in the wait queue, must have timed out
+    //     let timeout = curr.in_wait_queue(); // still in the wait queue, must have timed out
 
-        // Always try to remove the task from the timer list.
-        self.cancel_events(curr, true);
-        timeout
-    }
+    //     // Always try to remove the task from the timer list.
+    //     self.cancel_events(curr, true);
+    //     timeout
+    // }
 
-    /// Blocks the current coroutine task and put it into the wait queue, until other tasks
-    /// notify it, or the given duration has elapsed.
-    #[cfg(feature = "irq")]
-    pub async fn wait_timeout_f(&self, dur: core::time::Duration) -> bool {
-        let rq = current_run_queue::<NoPreemptIrqSave>();
-        let curr = crate::current();
-        let deadline = axhal::time::wall_time() + dur;
-        debug!(
-            "task wait_timeout: {} deadline={:?}",
-            curr.id_name(),
-            deadline
-        );
-        crate::timers::set_alarm_wakeup(deadline, curr.clone());
+    // /// Blocks the current coroutine task and put it into the wait queue, until other tasks
+    // /// notify it, or the given duration has elapsed.
+    // #[cfg(feature = "irq")]
+    // pub async fn wait_timeout_f(&self, dur: core::time::Duration) -> bool {
+    //     let rq = current_run_queue::<NoPreemptIrqSave>();
+    //     let curr = crate::current();
+    //     let deadline = axhal::time::wall_time() + dur;
+    //     debug!(
+    //         "task wait_timeout: {} deadline={:?}",
+    //         curr.id_name(),
+    //         deadline
+    //     );
+    //     crate::timers::set_alarm_wakeup(deadline, curr.clone());
 
-        crate::run_queue::BlockedReschedFuture::new(rq, self).await;
+    //     crate::run_queue::BlockedReschedFuture::new(rq, self).await;
 
-        let timeout = curr.in_wait_queue(); // still in the wait queue, must have timed out
+    //     let timeout = curr.in_wait_queue(); // still in the wait queue, must have timed out
 
-        // Always try to remove the task from the timer list.
-        self.cancel_events(curr, true);
-        timeout
-    }
+    //     // Always try to remove the task from the timer list.
+    //     self.cancel_events(curr, true);
+    //     timeout
+    // }
 
-    /// Blocks the current task and put it into the wait queue, until the given
-    /// `condition` becomes true, or the given duration has elapsed.
-    ///
-    /// Note that even other tasks notify this task, it will not wake up until
-    /// the above conditions are met.
-    #[cfg(feature = "irq")]
-    pub fn wait_timeout_until<F>(&self, dur: core::time::Duration, condition: F) -> bool
-    where
-        F: Fn() -> bool,
-    {
-        let curr = crate::current();
-        let deadline = axhal::time::wall_time() + dur;
-        debug!(
-            "task wait_timeout: {}, deadline={:?}",
-            curr.id_name(),
-            deadline
-        );
-        crate::timers::set_alarm_wakeup(deadline, curr.clone());
+    // /// Blocks the current task and put it into the wait queue, until the given
+    // /// `condition` becomes true, or the given duration has elapsed.
+    // ///
+    // /// Note that even other tasks notify this task, it will not wake up until
+    // /// the above conditions are met.
+    // #[cfg(feature = "irq")]
+    // pub fn wait_timeout_until<F>(&self, dur: core::time::Duration, condition: F) -> bool
+    // where
+    //     F: Fn() -> bool,
+    // {
+    //     let curr = crate::current();
+    //     let deadline = axhal::time::wall_time() + dur;
+    //     debug!(
+    //         "task wait_timeout: {}, deadline={:?}",
+    //         curr.id_name(),
+    //         deadline
+    //     );
+    //     crate::timers::set_alarm_wakeup(deadline, curr.clone());
 
-        let mut timeout = true;
-        loop {
-            let mut rq = current_run_queue::<NoPreemptIrqSave>();
-            if axhal::time::wall_time() >= deadline {
-                break;
-            }
-            let wq = self.queue.lock();
-            if condition() {
-                timeout = false;
-                break;
-            }
+    //     let mut timeout = true;
+    //     loop {
+    //         let mut rq = current_run_queue::<NoPreemptIrqSave>();
+    //         if axhal::time::wall_time() >= deadline {
+    //             break;
+    //         }
+    //         let wq = self.queue.lock();
+    //         if condition() {
+    //             timeout = false;
+    //             break;
+    //         }
 
-            rq.blocked_resched(wq);
-            // Preemption may occur here.
-        }
-        // Always try to remove the task from the timer list.
-        self.cancel_events(curr, true);
-        timeout
-    }
+    //         rq.blocked_resched(wq);
+    //         // Preemption may occur here.
+    //     }
+    //     // Always try to remove the task from the timer list.
+    //     self.cancel_events(curr, true);
+    //     timeout
+    // }
 
-    /// Blocks the current coroutine task and put it into the wait queue, until the given
-    /// `condition` becomes true, or the given duration has elapsed.
-    ///
-    /// Note that even other tasks notify this task, it will not wake up until
-    /// the above conditions are met.
-    #[cfg(feature = "irq")]
-    pub async fn wait_timeout_until_f<F>(&self, dur: core::time::Duration, condition: F) -> bool
-    where
-        F: Fn() -> bool,
-    {
-        let curr = crate::current();
-        let deadline = axhal::time::wall_time() + dur;
-        debug!(
-            "task wait_timeout: {}, deadline={:?}",
-            curr.id_name(),
-            deadline
-        );
-        crate::timers::set_alarm_wakeup(deadline, curr.clone());
+    // /// Blocks the current coroutine task and put it into the wait queue, until the given
+    // /// `condition` becomes true, or the given duration has elapsed.
+    // ///
+    // /// Note that even other tasks notify this task, it will not wake up until
+    // /// the above conditions are met.
+    // #[cfg(feature = "irq")]
+    // pub async fn wait_timeout_until_f<F>(&self, dur: core::time::Duration, condition: F) -> bool
+    // where
+    //     F: Fn() -> bool,
+    // {
+    //     let curr = crate::current();
+    //     let deadline = axhal::time::wall_time() + dur;
+    //     debug!(
+    //         "task wait_timeout: {}, deadline={:?}",
+    //         curr.id_name(),
+    //         deadline
+    //     );
+    //     crate::timers::set_alarm_wakeup(deadline, curr.clone());
 
-        let mut timeout = true;
-        loop {
-            let rq = current_run_queue::<NoPreemptIrqSave>();
-            if axhal::time::wall_time() >= deadline {
-                break;
-            }
-            if condition() {
-                timeout = false;
-                break;
-            }
+    //     let mut timeout = true;
+    //     loop {
+    //         let rq = current_run_queue::<NoPreemptIrqSave>();
+    //         if axhal::time::wall_time() >= deadline {
+    //             break;
+    //         }
+    //         if condition() {
+    //             timeout = false;
+    //             break;
+    //         }
 
-            crate::run_queue::BlockedReschedFuture::new(rq, self).await;
-            // Preemption may occur here.
-        }
-        // Always try to remove the task from the timer list.
-        self.cancel_events(curr, true);
-        timeout
-    }
+    //         crate::run_queue::BlockedReschedFuture::new(rq, self).await;
+    //         // Preemption may occur here.
+    //     }
+    //     // Always try to remove the task from the timer list.
+    //     self.cancel_events(curr, true);
+    //     timeout
+    // }
 
     /// Wakes up one task in the wait queue, usually the first one.
     ///
@@ -332,5 +333,5 @@ fn unblock_one_task(task: BaseTaskRef, resched: bool) {
     // Select run queue by the CPU set of the task.
     // Use `NoOp` kernel guard here because the function is called with holding the
     // lock of wait queue, where the irq and preemption are disabled.
-    select_run_queue::<NoOp>(&task).unblock_task(task, resched)
+    vsched_apis::unblock_task(task, resched, 0, 0);
 }

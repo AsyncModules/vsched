@@ -65,7 +65,7 @@ clean:
 
 utest: all
 	RUST_BACKTRACE=1 RUSTFLAGS='-C target-feature=+crt-static' cargo build --bin $(UTEST) --target $(TARGET) --target-dir $(TARGET_DIR) $(build_args-$(MODE))
-	qemu-$(ARCH) $(UTEST_BIN)
+	qemu-$(ARCH) -D qemu.log -d in_asm,int,mmu,pcall,cpu_reset,page,guest_errors $(UTEST_BIN)
   
 
 .PHONY: all clean 
