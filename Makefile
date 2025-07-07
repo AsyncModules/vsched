@@ -7,7 +7,7 @@ TARGET_DIR ?= $(PWD)/target
 PACKEAGE = vsched
 LIB ?= libvsched
 RQ_CAP ?= 256
-UTEST ?= yield
+UTEST ?= init_vsched
 UTEST_BIN ?= $(TARGET_DIR)/$(TARGET)/$(MODE)/$(UTEST)
 
 OBJDUMP = rust-objdump -t -T -r -R -d --print-imm-hex --x86-asm-syntax=intel

@@ -2,8 +2,8 @@
 #![no_std]
 
 #[rustfmt::skip]
-mod config {
+mod apis {
     include!(concat!(env!("OUT_DIR"), "/api.rs"));
 }
 
-pub use config::*;
+pub use apis::*;

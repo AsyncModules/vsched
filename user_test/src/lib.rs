@@ -4,4 +4,4 @@ extern crate alloc;
 mod vsched;
 // mod wait_queue;
 
-pub use vsched::map_vsched;
+pub use vsched::*;

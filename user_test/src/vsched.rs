@@ -1,29 +1,101 @@
 use base_task::{BaseTaskRef, Scheduler};
 use core::cell::UnsafeCell;
-use libloading::{Library, Symbol};
+use core::str::from_utf8;
 use memmap2::MmapMut;
+use page_table_entry::MappingFlags;
+use std::io::Read;
+pub use vsched_apis::*;
+use xmas_elf::program::SegmentData;
 
-pub fn map_vsched() {
-    let _data_base = map_vsched_data().unwrap();
-    map_vsched_text().unwrap();
+const VSCHED: &[u8] = core::include_bytes!("../../libvsched.so");
+
+pub struct Vsched {
+    #[allow(unused)]
+    map: MmapMut,
 }
 
-fn map_vsched_data() -> Result<usize, usize> {
-    let data_map = MmapMut::map_anon(VSCHED_DATA_SIZE).unwrap();
-    println!("data base: {:p}", data_map.as_ptr());
-    let data_base = data_map.as_ptr() as _;
-    core::mem::forget(data_map);
-    Ok(data_base)
+impl Vsched {
+    pub fn percpu(&self, index: usize) -> &PerCPU {
+        let base = self.map.as_ptr() as *const PerCPU;
+        unsafe { &*base.add(index) }
+    }
 }
 
-fn map_vsched_text() -> Result<usize, usize> {
-    let vsched_path = "./libvsched.so";
+pub fn map_vsched() -> Result<Vsched, ()> {
+    let mut vsched_map = MmapMut::map_anon(VSCHED_DATA_SIZE + 0x40000).unwrap();
+    log::info!(
+        "vsched_map base: [{:p}, {:p}]",
+        vsched_map.as_ptr(),
+        unsafe { vsched_map.as_ptr().add(VSCHED_DATA_SIZE + 0x40000) }
+    );
+    let vsched_so = &mut vsched_map[VSCHED_DATA_SIZE..];
+    #[allow(const_item_mutation)]
+    VSCHED.read(vsched_so).unwrap();
 
-    let vsched_file = unsafe { Library::new(vsched_path).unwrap() };
-    let symbol: Symbol<unsafe extern "C" fn(usize)> =
-        unsafe { vsched_file.get(b"yield_now").unwrap() };
-    unsafe { symbol(0) };
-    Ok(0)
+    let vsched_elf = xmas_elf::ElfFile::new(vsched_so).expect("Error parsing app ELF file.");
+    if let Some(interp) = vsched_elf
+        .program_iter()
+        .find(|ph| ph.get_type() == Ok(xmas_elf::program::Type::Interp))
+    {
+        let interp = match interp.get_data(&vsched_elf) {
+            Ok(SegmentData::Undefined(data)) => data,
+            _ => panic!("Invalid data in Interp Elf Program Header"),
+        };
+
+        let interp_path = from_utf8(interp).expect("Interpreter path isn't valid UTF-8");
+        // remove trailing '\0'
+        let _interp_path = interp_path.trim_matches(char::from(0)).to_string();
+        println!("Interpreter path: {:?}", _interp_path);
+    }
+    let elf_base_addr = Some(vsched_so.as_ptr() as usize);
+    // let relocate_pairs = elf_parser::get_relocate_pairs(&elf, elf_base_addr);
+    let segments = elf_parser::get_elf_segments(&vsched_elf, elf_base_addr);
+    let relocate_pairs = elf_parser::get_relocate_pairs(&vsched_elf, elf_base_addr);
+    for segment in segments {
+        log::debug!(
+            "{:?}, {:#x}, {:?}",
+            segment.vaddr,
+            segment.size,
+            segment.flags
+        );
+        let mut flag = libc::PROT_READ;
+        if segment.flags.contains(MappingFlags::EXECUTE) {
+            flag |= libc::PROT_EXEC;
+        }
+        if segment.flags.contains(MappingFlags::WRITE) {
+            flag |= libc::PROT_WRITE;
+        }
+        unsafe {
+            if libc::mprotect(segment.vaddr.as_usize() as _, segment.size, flag)
+                == libc::MAP_FAILED as _
+            {
+                log::error!("mprotect res failed");
+                return Err(());
+            }
+        };
+    }
+
+    for relocate_pair in relocate_pairs {
+        let src: usize = relocate_pair.src.into();
+        let dst: usize = relocate_pair.dst.into();
+        let count = relocate_pair.count;
+        log::info!(
+            "Relocate: src: 0x{:x}, dst: 0x{:x}, count: {}",
+            src,
+            dst,
+            count
+        );
+        unsafe { core::ptr::copy_nonoverlapping(src.to_ne_bytes().as_ptr(), dst as *mut u8, count) }
+    }
+
+    unsafe { vsched_apis::init_vsched_vtable(elf_base_addr.unwrap() as _, &vsched_elf) };
+
+    Ok(Vsched { map: vsched_map })
+}
+
+#[test]
+fn test_dyn_lib() {
+    map_vsched().unwrap();
 }
 
 const VSCHED_DATA_SIZE: usize =
@@ -31,17 +103,17 @@ const VSCHED_DATA_SIZE: usize =
         & (!(config::PAGES_SIZE_4K - 1));
 
 #[allow(unused)]
-struct PerCPU {
+pub struct PerCPU {
     /// The ID of the CPU this run queue is associated with.
-    cpu_id: usize,
+    pub cpu_id: usize,
     /// The core scheduler of this run queue.
     /// Since irq and preempt are preserved by the kernel guard hold by `AxRunQueueRef`,
     /// we just use a simple raw spin lock here.
-    scheduler: Scheduler,
+    pub scheduler: Scheduler,
 
-    current_task: UnsafeCell<BaseTaskRef>,
+    pub current_task: UnsafeCell<BaseTaskRef>,
 
-    idle_task: BaseTaskRef,
+    pub idle_task: BaseTaskRef,
     /// Stores the weak reference to the previous task that is running on this CPU.
-    prev_task: UnsafeCell<BaseTaskRef>,
+    pub prev_task: UnsafeCell<BaseTaskRef>,
 }
