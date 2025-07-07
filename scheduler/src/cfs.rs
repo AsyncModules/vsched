@@ -1,6 +1,7 @@
 use crossbeam::atomic::AtomicCell;
 
 use crate::BaseScheduler;
+use core::fmt::Debug;
 use core::ops::Deref;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicIsize, Ordering};
@@ -129,6 +130,22 @@ impl<T> CFSTaskRef<T> {
     #[allow(unused)]
     pub fn ptr_eq(&self, other: &Self) -> bool {
         self.inner.as_ptr() == other.inner.as_ptr()
+    }
+}
+
+impl<T: Debug> Debug for CFSTask<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CFSTask")
+            .field("inner", self.inner())
+            .finish()
+    }
+}
+
+impl<T: Debug> Debug for CFSTaskRef<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CFSTaskRef")
+            .field("inner", self.as_ref())
+            .finish()
     }
 }
 

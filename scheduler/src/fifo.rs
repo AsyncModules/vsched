@@ -1,4 +1,5 @@
 use crate::BaseScheduler;
+use core::fmt::Debug;
 use core::ops::Deref;
 use core::ptr::NonNull;
 use heapless::mpmc::MpMcQueue;
@@ -57,6 +58,22 @@ impl<T> FiFoTaskRef<T> {
     #[allow(unused)]
     pub fn ptr_eq(&self, other: &Self) -> bool {
         self.inner.as_ptr() == other.inner.as_ptr()
+    }
+}
+
+impl<T: Debug> Debug for FifoTask<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("FiFoTaskRef")
+            .field("inner", self.inner())
+            .finish()
+    }
+}
+
+impl<T: Debug> Debug for FiFoTaskRef<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("FiFoTaskRef")
+            .field("inner", self.as_ref())
+            .finish()
     }
 }
 

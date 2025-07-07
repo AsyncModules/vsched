@@ -1,4 +1,5 @@
 use crate::BaseScheduler;
+use core::fmt::Debug;
 use core::ops::Deref;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicIsize, Ordering};
@@ -72,6 +73,22 @@ impl<T, const S: usize> RRTaskRef<T, S> {
     #[allow(unused)]
     pub fn ptr_eq(&self, other: &Self) -> bool {
         self.inner.as_ptr() == other.inner.as_ptr()
+    }
+}
+
+impl<T: Debug, const S: usize> Debug for RRTask<T, S> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RRTask")
+            .field("inner", self.inner())
+            .finish()
+    }
+}
+
+impl<T: Debug, const S: usize> Debug for RRTaskRef<T, S> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RRTaskRef")
+            .field("inner", self.as_ref())
+            .finish()
     }
 }
 
