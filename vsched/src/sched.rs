@@ -24,7 +24,7 @@ use crate::task::TaskState;
 // The modulo operation is safe here because `axconfig::SMP` is always greater than 1 with "smp" enabled.
 #[allow(clippy::modulo_one)]
 #[inline]
-fn select_run_queue_index(cpumask: AxCpuMask) -> usize {
+pub(crate) fn select_run_queue_index(cpumask: AxCpuMask) -> usize {
     use core::sync::atomic::{AtomicUsize, Ordering};
     static RUN_QUEUE_INDEX: AtomicUsize = AtomicUsize::new(0);
 

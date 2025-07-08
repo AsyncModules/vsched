@@ -1,3 +1,4 @@
+use crate::get_cpu_id;
 use crate::wait_queue::WaitQueue;
 use core::cell::UnsafeCell;
 #[cfg(feature = "irq")]
@@ -175,9 +176,9 @@ pub fn wait(task_ref: BaseTaskRef) -> Option<i32> {
 }
 
 extern "C" fn task_entry() {
-    let prev_task = vsched_apis::prev_task(0);
+    let prev_task = vsched_apis::prev_task(get_cpu_id());
     prev_task.as_ref().set_on_cpu(false);
-    let task = vsched_apis::current(0);
+    let task = vsched_apis::current(get_cpu_id());
     if let Some(entry) = task.as_ref().task_ext().entry {
         unsafe { Box::from_raw(entry)() };
     }

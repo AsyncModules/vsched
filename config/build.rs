@@ -14,7 +14,8 @@ pub const SMP: usize = {};
 "#,
         rq_cap, smp
     );
-    std::fs::write(out_path, mut_cfg).unwrap();
+    std::fs::write(&out_path, mut_cfg).unwrap();
 
     println!("cargo:rerun-if-changed=src/*");
+    println!("cargo:rerun-if-changed={}", out_path.display());
 }

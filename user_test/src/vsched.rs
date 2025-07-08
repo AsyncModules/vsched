@@ -3,15 +3,28 @@ use core::cell::UnsafeCell;
 use core::str::from_utf8;
 use memmap2::MmapMut;
 use page_table_entry::MappingFlags;
-use std::collections::VecDeque;
+use std::cell::RefCell;
 use std::io::Read;
 use std::sync::Mutex;
+use std::thread_local;
+use std::{collections::VecDeque, sync::atomic::AtomicUsize};
 pub use vsched_apis::*;
+
 use xmas_elf::program::SegmentData;
 
 use crate::{WaitQueue, WaitQueueGuard};
 
 const VSCHED: &[u8] = core::include_bytes!("../../libvsched.so");
+
+static CPU_ID_ALLOCATOR: AtomicUsize = AtomicUsize::new(0);
+
+thread_local! {
+    pub static CPU_ID: RefCell<usize> = RefCell::new(0);
+}
+
+pub(crate) fn get_cpu_id() -> usize {
+    CPU_ID.with(|cpu_id| *cpu_id.borrow())
+}
 
 pub struct Vsched {
     #[allow(unused)]
@@ -97,8 +110,18 @@ pub fn map_vsched() -> Result<Vsched, ()> {
     Ok(Vsched { map: vsched_map })
 }
 
+pub fn init_vsched(idle_task: BaseTaskRef) {
+    CPU_ID.set(CPU_ID_ALLOCATOR.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    vsched_apis::init_vsched(get_cpu_id(), idle_task);
+}
+
+pub fn init_vsched_secondary(idle_task: BaseTaskRef) {
+    CPU_ID.set(CPU_ID_ALLOCATOR.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    vsched_apis::init_vsched_secondary(get_cpu_id(), idle_task);
+}
+
 pub fn blocked_resched(mut wq_guard: WaitQueueGuard) {
-    let curr = vsched_apis::current(0);
+    let curr = vsched_apis::current(get_cpu_id());
     assert!(curr.as_ref().is_running());
     assert!(!curr.as_ref().is_idle());
 
@@ -108,14 +131,14 @@ pub fn blocked_resched(mut wq_guard: WaitQueueGuard) {
     drop(wq_guard);
 
     log::debug!("task blocked {:?}", curr);
-    vsched_apis::resched(0);
+    vsched_apis::resched(get_cpu_id());
 }
 
 static EXITED_TASKS: Mutex<VecDeque<BaseTaskRef>> = Mutex::new(VecDeque::new());
 static WAIT_FOR_EXIT: WaitQueue = WaitQueue::new();
 
 pub fn exit(exit_code: i32) -> ! {
-    let curr = vsched_apis::current(0);
+    let curr = vsched_apis::current(get_cpu_id());
     assert!(curr.as_ref().is_running());
     assert!(!curr.as_ref().is_idle());
     if curr.as_ref().is_init() {
@@ -126,7 +149,7 @@ pub fn exit(exit_code: i32) -> ! {
         EXITED_TASKS.lock().unwrap().push_back(curr);
         WAIT_FOR_EXIT.notify_one(false);
     }
-    vsched_apis::resched(0);
+    vsched_apis::resched(get_cpu_id());
     unreachable!()
 }
 

@@ -4,6 +4,8 @@ use alloc::vec::Vec;
 use base_task::{BaseTaskRef, TaskExtRef};
 use std::sync::{Mutex, MutexGuard};
 
+use crate::get_cpu_id;
+
 // use crate::{CurrentTask, current_run_queue, select_run_queue};
 
 /// A queue to store sleeping tasks.
@@ -77,7 +79,7 @@ impl WaitQueue {
     /// notifies it.
     pub fn wait(&self) {
         let wq = self.queue.lock().unwrap();
-        let curr = vsched_apis::current(0);
+        let curr = vsched_apis::current(get_cpu_id());
         crate::vsched::blocked_resched(wq);
         self.cancel_events(curr, false);
     }
@@ -99,7 +101,7 @@ impl WaitQueue {
     where
         F: Fn() -> bool,
     {
-        let curr = vsched_apis::current(0);
+        let curr = vsched_apis::current(get_cpu_id());
         loop {
             let wq = self.queue.lock().unwrap();
             if condition() {
@@ -333,5 +335,6 @@ fn unblock_one_task(task: BaseTaskRef, resched: bool) {
     // Select run queue by the CPU set of the task.
     // Use `NoOp` kernel guard here because the function is called with holding the
     // lock of wait queue, where the irq and preemption are disabled.
-    vsched_apis::unblock_task(task, resched, 0, 0);
+    let dst_cpu_id = vsched_apis::select_index(task.clone());
+    vsched_apis::unblock_task(task, resched, get_cpu_id(), dst_cpu_id);
 }
