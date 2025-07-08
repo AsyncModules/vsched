@@ -111,6 +111,7 @@ pub fn {}{} {{
 
     // 生成最终的 api.rs 文件
     let api_out_path = &out_path;
+    std::fs::remove_file(api_out_path).unwrap_or(());
     let mut api_file_content = fs::OpenOptions::new()
         .create(true)
         .write(true)

@@ -24,8 +24,6 @@ else
   $(error "ARCH" must be one of "x86_64", "riscv64" or "aarch64")
 endif
 
-
-LD_SCRIPT := $(TARGET_DIR)/linker_$(ARCH).lds
 OUPUT_SO := $(TARGET_DIR)/$(TARGET)/$(MODE)/$(LIB).so
 build_args-release := --release
 
@@ -52,7 +50,6 @@ all:
 ifeq ($(wildcard $(TARGET_DIR)),)
 	mkdir $(TARGET_DIR)
 endif
-	@sed 's/%ARCH%/$(ARCH)/g' linker.lds > $(LD_SCRIPT)
 	RQ_CAP=${RQ_CAP} cargo build $(build_args)
 	@$(OBJCOPY) $(OUPUT_SO) $(OUPUT_SO)
 	cp $(OUPUT_SO) $(LIB).so

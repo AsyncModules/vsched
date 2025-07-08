@@ -89,8 +89,8 @@ impl TaskContext {
     /// restores the next task's context from `next_ctx` to CPU.
     pub fn switch_to(&mut self, next_ctx: &Self) {
         unsafe {
-            self.fs_base = crate::asm::read_thread_pointer();
-            crate::asm::write_thread_pointer(next_ctx.fs_base);
+            // self.fs_base = crate::asm::read_thread_pointer();
+            // crate::asm::write_thread_pointer(next_ctx.fs_base);
             context_switch(&mut self.rsp, &next_ctx.rsp)
         }
     }

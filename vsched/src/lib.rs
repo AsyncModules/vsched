@@ -9,9 +9,18 @@ mod task;
 pub use api::*;
 use sched::*;
 
+/// Safety:
+///     the offset of this function in the `.text`
+///     section must be little than 0x1000.
+///     The `#[inline(never)]` attribute and the
+///     offset requirement can make it work ok.
+#[inline(never)]
 pub(crate) fn get_data_base() -> usize {
     let pc = unsafe { hal::asm::get_pc() };
-    pc & config::DATA_SEC_MASK
+    const VSCHED_DATA_SIZE: usize =
+        (config::SMP * core::mem::size_of::<crate::percpu::PerCPU>() + config::PAGES_SIZE_4K - 1)
+            & (!(config::PAGES_SIZE_4K - 1));
+    (pc & config::DATA_SEC_MASK) - VSCHED_DATA_SIZE
 }
 
 #[cfg(all(target_os = "linux", not(test)))]

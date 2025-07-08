@@ -29,10 +29,10 @@ pub unsafe fn get_pc() -> usize {
     let mut pc = 0usize;
     unsafe {
         asm!(
-            "adrp {pc}, 1f",
-            "add {pc}, {pc}, :lo12:1f", // 加载 PC 相对地址的低 12 位，与 x0 组合，结果存储在 x0 中
-            "1:",
-            ".word 0",
+            "
+            adrp {pc}, 1f
+            1: nop
+            ",
             pc = out(reg) pc,
         );
     };

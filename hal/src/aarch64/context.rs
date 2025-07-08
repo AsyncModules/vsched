@@ -77,13 +77,11 @@ unsafe extern "C" fn context_switch(_current_task: &mut TaskContext, _next_task:
         stp     x21, x22, [x0, 4 * 8]
         stp     x19, x20, [x0, 2 * 8]
         mov     x19, sp
-        mrs     x20, tpidr_el0
         stp     x19, x20, [x0]
 
         // restore new context
         ldp     x19, x20, [x1]
         mov     sp, x19
-        msr     tpidr_el0, x20
         ldp     x19, x20, [x1, 2 * 8]
         ldp     x21, x22, [x1, 4 * 8]
         ldp     x23, x24, [x1, 6 * 8]
