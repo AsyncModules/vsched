@@ -35,6 +35,7 @@ pub struct FiFoTaskRef<T> {
 }
 
 unsafe impl<T> Send for FiFoTaskRef<T> {}
+unsafe impl<T> Sync for FiFoTaskRef<T> {}
 
 impl<T> Clone for FiFoTaskRef<T> {
     fn clone(&self) -> Self {

@@ -118,26 +118,9 @@ impl TaskExt {
 
 base_task::def_task_ext!(TaskExt);
 
-#[repr(transparent)]
-pub struct Task {
-    inner: BaseTask,
-}
+pub struct Task;
 
 impl Task {
-    fn task_ext_(&self) -> &TaskExt {
-        self.inner.task_ext()
-    }
-
-    /// Wait for the task to exit, and return the exit code.
-    ///
-    /// It will return immediately if the task has already exited (but not dropped).
-    pub fn join(&self) -> Option<i32> {
-        self.task_ext_()
-            .wait_for_exit
-            .wait_until(|| self.inner.state() == TaskState::Exited);
-        Some(self.task_ext_().exit_code.load(Ordering::Acquire))
-    }
-
     // /// Wait for the task to exit, and return the exit code.
     // ///
     // /// It will return immediately if the task has already exited (but not dropped).
@@ -149,7 +132,7 @@ impl Task {
     //     Some(self.task_ext_().exit_code.load(Ordering::Acquire))
     // }
 
-    pub fn new<F>(entry: F, name: String, stack_size: usize) -> Self
+    pub fn new<F>(entry: F, name: String, stack_size: usize) -> BaseTaskRef
     where
         F: FnOnce() + Send + 'static,
     {
@@ -161,12 +144,10 @@ impl Task {
         let kstack_top = t.kernel_stack_top().unwrap();
         t.ctx_mut().init(task_entry as usize, kstack_top);
 
-        Self {
-            inner: BaseTask::new(t),
-        }
+        BaseTaskRef::new(NonNull::new(Arc::into_raw(Arc::new(BaseTask::new(t))) as _).unwrap())
     }
 
-    pub fn new_init(name: String) -> Self {
+    pub fn new_init(name: String) -> BaseTaskRef {
         let mut t = TaskInner::new();
         t.set_init(true);
         t.set_on_cpu(true);
@@ -174,17 +155,28 @@ impl Task {
             t.set_idle(true);
         }
         t.init_task_ext(TaskExt::new_init(name));
-        Self {
-            inner: BaseTask::new(t),
-        }
-    }
-
-    pub fn into_ref(self) -> BaseTaskRef {
-        BaseTaskRef::new(NonNull::new(Arc::into_raw(Arc::new(self)) as _).unwrap())
+        BaseTaskRef::new(NonNull::new(Arc::into_raw(Arc::new(BaseTask::new(t))) as _).unwrap())
     }
 }
 
+pub fn wait(task_ref: BaseTaskRef) -> Option<i32> {
+    task_ref
+        .as_ref()
+        .task_ext()
+        .wait_for_exit
+        .wait_until(|| task_ref.as_ref().state() == TaskState::Exited);
+    Some(
+        task_ref
+            .as_ref()
+            .task_ext()
+            .exit_code
+            .load(Ordering::Acquire),
+    )
+}
+
 extern "C" fn task_entry() {
+    let prev_task = vsched_apis::prev_task(0);
+    prev_task.as_ref().set_on_cpu(false);
     let task = vsched_apis::current(0);
     if let Some(entry) = task.as_ref().task_ext().entry {
         unsafe { Box::from_raw(entry)() };

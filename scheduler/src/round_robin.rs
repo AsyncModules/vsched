@@ -51,6 +51,7 @@ pub struct RRTaskRef<T, const S: usize> {
 }
 
 unsafe impl<T, const S: usize> Send for RRTaskRef<T, S> {}
+unsafe impl<T, const S: usize> Sync for RRTaskRef<T, S> {}
 
 impl<T, const S: usize> Clone for RRTaskRef<T, S> {
     fn clone(&self) -> Self {

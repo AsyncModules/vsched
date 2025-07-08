@@ -26,6 +26,21 @@ cfg_if::cfg_if! {
 ///
 /// Panics if the current task is not initialized.
 #[unsafe(no_mangle)]
+pub extern "C" fn prev_task(cpu_id: usize) -> BaseTaskRef {
+    unsafe {
+        crate::get_run_queue(cpu_id)
+            .prev_task
+            .as_ref_unchecked()
+            .clone()
+    }
+}
+
+/// Gets the current task.
+///
+/// # Panics
+///
+/// Panics if the current task is not initialized.
+#[unsafe(no_mangle)]
 pub extern "C" fn current(cpu_id: usize) -> BaseTaskRef {
     unsafe {
         crate::get_run_queue(cpu_id)

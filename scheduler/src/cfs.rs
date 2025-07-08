@@ -108,6 +108,7 @@ pub struct CFSTaskRef<T> {
 }
 
 unsafe impl<T> Send for CFSTaskRef<T> {}
+unsafe impl<T> Sync for CFSTaskRef<T> {}
 
 impl<T> Clone for CFSTaskRef<T> {
     fn clone(&self) -> Self {
