@@ -240,6 +240,16 @@ impl TaskInner {
     }
 
     #[inline]
+    pub const fn set_init(&mut self, is_init: bool) {
+        self.is_init = is_init
+    }
+
+    #[inline]
+    pub const fn set_idle(&mut self, is_idle: bool) {
+        self.is_idle = is_idle
+    }
+
+    #[inline]
     pub fn set_preempt_pending(&self, pending: bool) {
         self.need_resched.store(pending, Ordering::Release)
     }

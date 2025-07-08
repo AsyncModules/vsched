@@ -103,6 +103,17 @@ impl TaskExt {
             future: UnsafeCell::new(None),
         }
     }
+
+    pub fn new_init(name: String) -> Self {
+        Self {
+            name,
+            entry: None,
+            in_wait_queue: AtomicBool::new(false),
+            exit_code: AtomicI32::new(0),
+            wait_for_exit: WaitQueue::new(),
+            future: UnsafeCell::new(None),
+        }
+    }
 }
 
 base_task::def_task_ext!(TaskExt);
@@ -150,6 +161,19 @@ impl Task {
         let kstack_top = t.kernel_stack_top().unwrap();
         t.ctx_mut().init(task_entry as usize, kstack_top);
 
+        Self {
+            inner: BaseTask::new(t),
+        }
+    }
+
+    pub fn new_init(name: String) -> Self {
+        let mut t = TaskInner::new();
+        t.set_init(true);
+        t.set_on_cpu(true);
+        if name == "idle" {
+            t.set_idle(true);
+        }
+        t.init_task_ext(TaskExt::new_init(name));
         Self {
             inner: BaseTask::new(t),
         }
