@@ -1,18 +1,19 @@
 use base_task::{BaseTaskRef, Scheduler, TaskExtRef};
+use config::AxCpuMask;
 use core::cell::UnsafeCell;
 use core::str::from_utf8;
 use memmap2::MmapMut;
 use page_table_entry::MappingFlags;
 use std::cell::RefCell;
 use std::io::Read;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread_local;
 use std::{collections::VecDeque, sync::atomic::AtomicUsize};
 pub use vsched_apis::*;
 
 use xmas_elf::program::SegmentData;
 
-use crate::{WaitQueue, WaitQueueGuard};
+use crate::{Task, WaitQueue, WaitQueueGuard};
 
 const VSCHED: &[u8] = core::include_bytes!("../../libvsched.so");
 
@@ -22,7 +23,7 @@ thread_local! {
     pub static CPU_ID: RefCell<usize> = RefCell::new(0);
 }
 
-pub(crate) fn get_cpu_id() -> usize {
+pub fn get_cpu_id() -> usize {
     CPU_ID.with(|cpu_id| *cpu_id.borrow())
 }
 
@@ -110,13 +111,56 @@ pub fn map_vsched() -> Result<Vsched, ()> {
     Ok(Vsched { map: vsched_map })
 }
 
-pub fn init_vsched(idle_task: BaseTaskRef) {
-    CPU_ID.set(CPU_ID_ALLOCATOR.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
-    vsched_apis::init_vsched(get_cpu_id(), idle_task);
+fn gc_entry() {
+    loop {
+        let mut exited_tasks = EXITED_TASKS.lock().unwrap();
+        let n = exited_tasks.len();
+        for _ in 0..n {
+            if let Some(task) = exited_tasks.pop_front() {
+                let arc_task = unsafe { Arc::from_raw(task.as_ref()) };
+                if Arc::strong_count(&arc_task) == 1 {
+                    drop(arc_task);
+                } else {
+                    exited_tasks.push_back(task);
+                }
+            }
+        }
+        drop(exited_tasks);
+        WAIT_FOR_EXIT.wait();
+    }
 }
 
-pub fn init_vsched_secondary(idle_task: BaseTaskRef) {
+pub fn run_idle() {
+    loop {
+        vsched_apis::yield_now(get_cpu_id());
+    }
+}
+
+pub fn init_vsched() {
     CPU_ID.set(CPU_ID_ALLOCATOR.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    let main_task = Task::new_init("main".into());
+    main_task
+        .as_ref()
+        .set_cpumask(AxCpuMask::one_shot(get_cpu_id()));
+    vsched_apis::init_vsched(get_cpu_id(), main_task);
+    let gc_task = Task::new(gc_entry, "gc".into(), config::TASK_STACK_SIZE);
+    gc_task
+        .as_ref()
+        .set_cpumask(AxCpuMask::one_shot(get_cpu_id()));
+    vsched_apis::spawn(gc_task);
+    let idle_task = Task::new(|| run_idle(), "idle".into(), config::TASK_STACK_SIZE);
+    idle_task
+        .as_ref()
+        .set_cpumask(AxCpuMask::one_shot(get_cpu_id()));
+    vsched_apis::spawn(idle_task);
+}
+
+pub fn init_vsched_secondary() {
+    CPU_ID.set(CPU_ID_ALLOCATOR.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    let idle_task = Task::new_init("idle".into());
+    idle_task
+        .as_ref()
+        .set_cpumask(AxCpuMask::one_shot(get_cpu_id()));
     vsched_apis::init_vsched_secondary(get_cpu_id(), idle_task);
 }
 
@@ -130,7 +174,7 @@ pub fn blocked_resched(mut wq_guard: WaitQueueGuard) {
     wq_guard.push_back(curr.clone());
     drop(wq_guard);
 
-    log::debug!("task blocked {:?}", curr);
+    log::debug!("task blocked {:?}", curr.as_ref().task_ext().name());
     vsched_apis::resched(get_cpu_id());
 }
 
@@ -141,6 +185,7 @@ pub fn exit(exit_code: i32) -> ! {
     let curr = vsched_apis::current(get_cpu_id());
     assert!(curr.as_ref().is_running());
     assert!(!curr.as_ref().is_idle());
+    log::debug!("{:?} is exited", curr.as_ref().task_ext().name());
     if curr.as_ref().is_init() {
         EXITED_TASKS.lock().unwrap().clear();
     } else {

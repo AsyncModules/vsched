@@ -332,9 +332,14 @@ impl WaitQueue {
 fn unblock_one_task(task: BaseTaskRef, resched: bool) {
     // Mark task as not in wait queue.
     task.as_ref().task_ext().set_in_wait_queue(false);
+    log::debug!(
+        "unblock task {:?}, is on cpu {}",
+        task.as_ref().task_ext().name(),
+        task.as_ref().on_cpu()
+    );
     // Select run queue by the CPU set of the task.
     // Use `NoOp` kernel guard here because the function is called with holding the
     // lock of wait queue, where the irq and preemption are disabled.
-    let dst_cpu_id = vsched_apis::select_index(task.clone());
+    let dst_cpu_id = vsched_apis::select_index(&task);
     vsched_apis::unblock_task(task, resched, get_cpu_id(), dst_cpu_id);
 }

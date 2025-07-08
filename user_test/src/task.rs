@@ -155,6 +155,7 @@ impl Task {
         if name == "idle" {
             t.set_idle(true);
         }
+        t.set_state(TaskState::Running);
         t.init_task_ext(TaskExt::new_init(name));
         BaseTaskRef::new(NonNull::new(Arc::into_raw(Arc::new(BaseTask::new(t))) as _).unwrap())
     }

@@ -82,7 +82,7 @@ pub fn get_run_queue(index: usize) -> &'static PerCPU {
 /// 2. Use a more generic load balancing algorithm that can be customized or replaced.
 ///
 #[inline]
-pub(crate) fn select_run_queue(task: BaseTaskRef) -> &'static PerCPU {
+pub(crate) fn select_run_queue(task: &BaseTaskRef) -> &'static PerCPU {
     
     // When SMP is enabled, select the run queue based on the task's CPU affinity and load balance.
     let index = select_run_queue_index(task.as_ref().cpumask());

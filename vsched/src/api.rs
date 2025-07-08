@@ -26,7 +26,7 @@ cfg_if::cfg_if! {
 ///
 /// Panics if the current task is not initialized.
 #[unsafe(no_mangle)]
-pub extern "C" fn select_index(task: BaseTaskRef) -> usize {
+pub extern "C" fn select_index(task: &BaseTaskRef) -> usize {
     crate::sched::select_run_queue_index(task.as_ref().cpumask())
 }
 
@@ -82,8 +82,9 @@ pub extern "C" fn init_vsched_secondary(cpu_id: usize, idle_task: BaseTaskRef) {
 ///
 /// Returns the task reference.
 #[unsafe(no_mangle)]
-pub extern "C" fn spawn(task_ref: BaseTaskRef) {
-    select_run_queue(task_ref.clone()).add_task(task_ref);
+pub extern "C" fn spawn(task_ref: BaseTaskRef) -> BaseTaskRef {
+    select_run_queue(&task_ref).add_task(task_ref.clone());
+    task_ref
 }
 
 /// Set the priority for current task.
