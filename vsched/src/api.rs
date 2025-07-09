@@ -1,3 +1,4 @@
+use crate::sched::select_run_queue_index;
 use crate::task::TaskInner;
 use crate::{get_data_base, percpu::PerCPU, sched::get_run_queue, select_run_queue};
 use config::RQ_CAP;
@@ -18,16 +19,6 @@ cfg_if::cfg_if! {
         pub type BaseTaskRef = scheduler::FiFoTaskRef<TaskInner>;
         pub type Scheduler = scheduler::FifoScheduler<TaskInner, RQ_CAP>;
     }
-}
-
-/// Gets the current task.
-///
-/// # Panics
-///
-/// Panics if the current task is not initialized.
-#[unsafe(no_mangle)]
-pub extern "C" fn select_index(task: &BaseTaskRef) -> usize {
-    crate::sched::select_run_queue_index(task.as_ref().cpumask())
 }
 
 #[unsafe(no_mangle)]
@@ -124,8 +115,8 @@ pub extern "C" fn resched_f(cpu_id: usize) -> bool {
 }
 
 /// Wake up a task to the distination cpu,
-#[rustfmt::skip]
 #[unsafe(no_mangle)]
-pub extern "C" fn unblock_task(task: BaseTaskRef, resched: bool, src_cpu_id: usize, dst_cpu_id: usize) {
+pub extern "C" fn unblock_task(task: BaseTaskRef, resched: bool, src_cpu_id: usize) {
+    let dst_cpu_id = select_run_queue_index(task.as_ref().cpumask());
     get_run_queue(dst_cpu_id).unblock_task(task, resched, src_cpu_id);
 }
