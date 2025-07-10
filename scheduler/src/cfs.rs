@@ -101,10 +101,13 @@ impl<T> Deref for CFSTask<T> {
     }
 }
 
-#[repr(transparent)]
-#[derive(Copy)]
+#[repr(C)]
 pub struct CFSTaskRef<T> {
     inner: NonNull<CFSTask<T>>,
+    clone_fn: Option<extern "C" fn(*const CFSTask<T>)>,
+    weak_clone_fn: Option<extern "C" fn(*const CFSTask<T>) -> WeakCFSTaskRef<T>>,
+    drop_fn: Option<extern "C" fn(*const CFSTask<T>)>,
+    strong_count_fn: Option<extern "C" fn(*const CFSTask<T>) -> usize>,
 }
 
 unsafe impl<T> Send for CFSTaskRef<T> {}
@@ -112,27 +115,67 @@ unsafe impl<T> Sync for CFSTaskRef<T> {}
 
 impl<T> Clone for CFSTaskRef<T> {
     fn clone(&self) -> Self {
-        Self { inner: self.inner }
+        let ptr = self.inner.as_ptr();
+        (self.clone_fn.unwrap())(ptr);
+        Self {
+            inner: self.inner.clone(),
+            clone_fn: self.clone_fn.clone(),
+            weak_clone_fn: self.weak_clone_fn.clone(),
+            drop_fn: self.drop_fn.clone(),
+            strong_count_fn: self.strong_count_fn.clone(),
+        }
+    }
+}
+
+impl<T> Drop for CFSTaskRef<T> {
+    fn drop(&mut self) {
+        let ptr = self.inner.as_ptr();
+        (self.drop_fn.unwrap())(ptr);
     }
 }
 
 impl<T> CFSTaskRef<T> {
     pub const EMPTY: Self = Self {
         inner: NonNull::dangling(),
+        clone_fn: None,
+        weak_clone_fn: None,
+        drop_fn: None,
+        strong_count_fn: None,
     };
 
-    #[allow(unused)]
-    pub fn new(inner: NonNull<CFSTask<T>>) -> Self {
-        Self { inner }
+    pub fn new(
+        inner: NonNull<CFSTask<T>>,
+        clone_fn: extern "C" fn(*const CFSTask<T>),
+        weak_clone_fn: extern "C" fn(*const CFSTask<T>) -> WeakCFSTaskRef<T>,
+        drop_fn: extern "C" fn(*const CFSTask<T>),
+        strong_count_fn: extern "C" fn(*const CFSTask<T>) -> usize,
+    ) -> Self {
+        Self {
+            inner,
+            clone_fn: Some(clone_fn),
+            weak_clone_fn: Some(weak_clone_fn),
+            drop_fn: Some(drop_fn),
+            strong_count_fn: Some(strong_count_fn),
+        }
     }
 
-    pub fn as_ref(&self) -> &CFSTask<T> {
-        unsafe { self.inner.as_ref() }
-    }
-
-    #[allow(unused)]
     pub fn ptr_eq(&self, other: &Self) -> bool {
         self.inner.as_ptr() == other.inner.as_ptr()
+    }
+
+    pub fn strong_count(&self) -> usize {
+        (self.strong_count_fn.unwrap())(self.inner.as_ptr())
+    }
+
+    pub fn weak_clone(&self) -> WeakCFSTaskRef<T> {
+        (self.weak_clone_fn.unwrap())(self.inner.as_ptr())
+    }
+}
+
+impl<T> Deref for CFSTaskRef<T> {
+    type Target = CFSTask<T>;
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.inner.as_ref() }
     }
 }
 
@@ -146,9 +189,25 @@ impl<T: Debug> Debug for CFSTask<T> {
 
 impl<T: Debug> Debug for CFSTaskRef<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("CFSTaskRef")
-            .field("inner", self.as_ref())
-            .finish()
+        f.debug_struct("CFSTaskRef").field("inner", self).finish()
+    }
+}
+
+#[repr(C)]
+pub struct WeakCFSTaskRef<T> {
+    inner: NonNull<CFSTask<T>>,
+}
+
+impl<T> WeakCFSTaskRef<T> {
+    pub fn new(inner: NonNull<CFSTask<T>>) -> Self {
+        Self { inner }
+    }
+}
+
+impl<T> Deref for WeakCFSTaskRef<T> {
+    type Target = CFSTask<T>;
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.inner.as_ref() }
     }
 }
 
@@ -182,14 +241,13 @@ impl<T, const CAPACITY: usize> BaseScheduler for CFScheduler<T, CAPACITY> {
     fn init(&mut self) {}
 
     fn add_task(&self, task: Self::SchedItem) {
-        let raw_task = task.as_ref();
         if self.min_vruntime.load().is_none() {
             self.min_vruntime.store(Some(0_isize));
         }
         let vruntime = self.min_vruntime.load().unwrap();
         let taskid = self.id_pool.fetch_add(1, Ordering::Release);
-        raw_task.set_vruntime(vruntime);
-        raw_task.set_id(taskid);
+        task.set_vruntime(vruntime);
+        task.set_id(taskid);
         self.ready_queue.insert((vruntime, taskid), task);
         if let Some(((min_vruntime, _), _)) = self.ready_queue.first_key_value() {
             self.min_vruntime.store(Some(min_vruntime));
@@ -207,26 +265,23 @@ impl<T, const CAPACITY: usize> BaseScheduler for CFScheduler<T, CAPACITY> {
     }
 
     fn put_prev_task(&self, prev: Self::SchedItem, _preempt: bool) {
-        let raw_prev_task = prev.as_ref();
         let taskid = self.id_pool.fetch_add(1, Ordering::Release);
-        raw_prev_task.set_id(taskid);
-        self.ready_queue
-            .insert((raw_prev_task.get_vruntime(), taskid), prev);
+        prev.set_id(taskid);
+        self.ready_queue.insert((prev.get_vruntime(), taskid), prev);
     }
 
     fn task_tick(&self, current: &Self::SchedItem) -> bool {
-        let raw_task = current.as_ref();
-        raw_task.task_tick();
+        current.task_tick();
         if self.ready_queue.is_empty() {
             return false;
         }
         self.min_vruntime.load().is_none()
-            || raw_task.get_vruntime() > self.min_vruntime.load().unwrap()
+            || current.get_vruntime() > self.min_vruntime.load().unwrap()
     }
 
     fn set_priority(&self, task: &Self::SchedItem, prio: isize) -> bool {
         if (-20..=19).contains(&prio) {
-            task.as_ref().set_priority(prio);
+            task.set_priority(prio);
             true
         } else {
             false

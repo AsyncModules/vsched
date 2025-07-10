@@ -28,10 +28,13 @@ impl<T> Deref for FifoTask<T> {
     }
 }
 
-#[repr(transparent)]
-#[derive(Copy)]
+#[repr(C)]
 pub struct FiFoTaskRef<T> {
     inner: NonNull<FifoTask<T>>,
+    clone_fn: Option<extern "C" fn(*const FifoTask<T>)>,
+    weak_clone_fn: Option<extern "C" fn(*const FifoTask<T>) -> WeakFiFoTaskRef<T>>,
+    drop_fn: Option<extern "C" fn(*const FifoTask<T>)>,
+    strong_count_fn: Option<extern "C" fn(*const FifoTask<T>) -> usize>,
 }
 
 unsafe impl<T> Send for FiFoTaskRef<T> {}
@@ -39,34 +42,74 @@ unsafe impl<T> Sync for FiFoTaskRef<T> {}
 
 impl<T> Clone for FiFoTaskRef<T> {
     fn clone(&self) -> Self {
-        Self { inner: self.inner }
+        let ptr = self.inner.as_ptr();
+        (self.clone_fn.unwrap())(ptr);
+        Self {
+            inner: self.inner.clone(),
+            clone_fn: self.clone_fn.clone(),
+            weak_clone_fn: self.weak_clone_fn.clone(),
+            drop_fn: self.drop_fn.clone(),
+            strong_count_fn: self.strong_count_fn.clone(),
+        }
+    }
+}
+
+impl<T> Drop for FiFoTaskRef<T> {
+    fn drop(&mut self) {
+        let ptr = self.inner.as_ptr();
+        // unsafe { core::arch::asm!("mv t0, {ptr}", "ebreak", ptr = in(reg )ptr as usize) }
+        (self.drop_fn.unwrap())(ptr);
     }
 }
 
 impl<T> FiFoTaskRef<T> {
     pub const EMPTY: Self = Self {
         inner: NonNull::dangling(),
+        clone_fn: None,
+        weak_clone_fn: None,
+        drop_fn: None,
+        strong_count_fn: None,
     };
 
-    #[allow(unused)]
-    pub fn new(inner: NonNull<FifoTask<T>>) -> Self {
-        Self { inner }
+    pub fn new(
+        inner: NonNull<FifoTask<T>>,
+        clone_fn: extern "C" fn(*const FifoTask<T>),
+        weak_clone_fn: extern "C" fn(*const FifoTask<T>) -> WeakFiFoTaskRef<T>,
+        drop_fn: extern "C" fn(*const FifoTask<T>),
+        strong_count_fn: extern "C" fn(*const FifoTask<T>) -> usize,
+    ) -> Self {
+        Self {
+            inner,
+            clone_fn: Some(clone_fn),
+            weak_clone_fn: Some(weak_clone_fn),
+            drop_fn: Some(drop_fn),
+            strong_count_fn: Some(strong_count_fn),
+        }
     }
 
-    #[allow(unused)]
-    pub fn as_ref(&self) -> &FifoTask<T> {
-        unsafe { self.inner.as_ref() }
-    }
-
-    #[allow(unused)]
     pub fn ptr_eq(&self, other: &Self) -> bool {
         self.inner.as_ptr() == other.inner.as_ptr()
+    }
+
+    pub fn strong_count(&self) -> usize {
+        (self.strong_count_fn.unwrap())(self.inner.as_ptr())
+    }
+
+    pub fn weak_clone(&self) -> WeakFiFoTaskRef<T> {
+        (self.weak_clone_fn.unwrap())(self.inner.as_ptr())
+    }
+}
+
+impl<T> Deref for FiFoTaskRef<T> {
+    type Target = FifoTask<T>;
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.inner.as_ref() }
     }
 }
 
 impl<T: Debug> Debug for FifoTask<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("FiFoTaskRef")
+        f.debug_struct("FiFoTask")
             .field("inner", self.inner())
             .finish()
     }
@@ -75,8 +118,26 @@ impl<T: Debug> Debug for FifoTask<T> {
 impl<T: Debug> Debug for FiFoTaskRef<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("FiFoTaskRef")
-            .field("inner", self.as_ref())
+            .field("inner", unsafe { self.inner.as_ref() })
             .finish()
+    }
+}
+
+#[repr(C)]
+pub struct WeakFiFoTaskRef<T> {
+    inner: NonNull<FifoTask<T>>,
+}
+
+impl<T> WeakFiFoTaskRef<T> {
+    pub fn new(inner: NonNull<FifoTask<T>>) -> Self {
+        Self { inner }
+    }
+}
+
+impl<T> Deref for WeakFiFoTaskRef<T> {
+    type Target = FifoTask<T>;
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.inner.as_ref() }
     }
 }
 

@@ -1,6 +1,10 @@
-use crate::api::{BaseTaskRef, Scheduler};
-use core::cell::UnsafeCell;
+use crate::{
+    WeakBaseTaskRef,
+    api::{BaseTaskRef, Scheduler},
+};
+use core::{cell::UnsafeCell, mem::MaybeUninit};
 
+#[repr(C)]
 pub(crate) struct PerCPU {
     /// The ID of the CPU this run queue is associated with.
     pub(crate) cpu_id: usize,
@@ -13,17 +17,17 @@ pub(crate) struct PerCPU {
 
     pub(crate) idle_task: BaseTaskRef,
     /// Stores the weak reference to the previous task that is running on this CPU.
-    pub(crate) prev_task: UnsafeCell<BaseTaskRef>,
+    pub(crate) prev_task: UnsafeCell<MaybeUninit<WeakBaseTaskRef>>,
 }
 
 impl PerCPU {
-    pub fn new(cpu_id: usize, idle_task: BaseTaskRef) -> Self {
+    pub fn new(cpu_id: usize, idle_task: BaseTaskRef, boot_task: BaseTaskRef) -> Self {
         Self {
             cpu_id,
             scheduler: Scheduler::new(),
-            current_task: UnsafeCell::new(idle_task.clone()),
-            idle_task,
-            prev_task: UnsafeCell::new(BaseTaskRef::EMPTY),
+            current_task: UnsafeCell::new(boot_task),
+            idle_task: idle_task,
+            prev_task: UnsafeCell::new(MaybeUninit::uninit()),
         }
     }
 }

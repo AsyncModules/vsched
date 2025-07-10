@@ -44,10 +44,13 @@ impl<T, const S: usize> Deref for RRTask<T, S> {
     }
 }
 
-#[repr(transparent)]
-#[derive(Copy)]
+#[repr(C)]
 pub struct RRTaskRef<T, const S: usize> {
     inner: NonNull<RRTask<T, S>>,
+    clone_fn: Option<extern "C" fn(*const RRTask<T, S>)>,
+    weak_clone_fn: Option<extern "C" fn(*const RRTask<T, S>) -> WeakRRTaskRef<T, S>>,
+    drop_fn: Option<extern "C" fn(*const RRTask<T, S>)>,
+    strong_count_fn: Option<extern "C" fn(*const RRTask<T, S>) -> usize>,
 }
 
 unsafe impl<T, const S: usize> Send for RRTaskRef<T, S> {}
@@ -55,27 +58,67 @@ unsafe impl<T, const S: usize> Sync for RRTaskRef<T, S> {}
 
 impl<T, const S: usize> Clone for RRTaskRef<T, S> {
     fn clone(&self) -> Self {
-        Self { inner: self.inner }
+        let ptr = self.inner.as_ptr();
+        (self.clone_fn.unwrap())(ptr);
+        Self {
+            inner: self.inner.clone(),
+            clone_fn: self.clone_fn.clone(),
+            weak_clone_fn: self.weak_clone_fn.clone(),
+            drop_fn: self.drop_fn.clone(),
+            strong_count_fn: self.strong_count_fn.clone(),
+        }
+    }
+}
+
+impl<T, const S: usize> Drop for RRTaskRef<T, S> {
+    fn drop(&mut self) {
+        let ptr = self.inner.as_ptr();
+        (self.drop_fn.unwrap())(ptr);
     }
 }
 
 impl<T, const S: usize> RRTaskRef<T, S> {
     pub const EMPTY: Self = Self {
         inner: NonNull::dangling(),
+        clone_fn: None,
+        weak_clone_fn: None,
+        drop_fn: None,
+        strong_count_fn: None,
     };
 
-    #[allow(unused)]
-    pub fn new(inner: NonNull<RRTask<T, S>>) -> Self {
-        Self { inner }
+    pub fn new(
+        inner: NonNull<RRTask<T, S>>,
+        clone_fn: extern "C" fn(*const RRTask<T, S>),
+        weak_clone_fn: extern "C" fn(*const RRTask<T, S>) -> WeakRRTaskRef<T, S>,
+        drop_fn: extern "C" fn(*const RRTask<T, S>),
+        strong_count_fn: extern "C" fn(*const RRTask<T, S>) -> usize,
+    ) -> Self {
+        Self {
+            inner,
+            clone_fn: Some(clone_fn),
+            weak_clone_fn: Some(weak_clone_fn),
+            drop_fn: Some(drop_fn),
+            strong_count_fn: Some(strong_count_fn),
+        }
     }
 
-    pub fn as_ref(&self) -> &RRTask<T, S> {
-        unsafe { self.inner.as_ref() }
-    }
-
-    #[allow(unused)]
     pub fn ptr_eq(&self, other: &Self) -> bool {
         self.inner.as_ptr() == other.inner.as_ptr()
+    }
+
+    pub fn strong_count(&self) -> usize {
+        (self.strong_count_fn.unwrap())(self.inner.as_ptr())
+    }
+
+    pub fn weak_clone(&self) -> WeakRRTaskRef<T, S> {
+        (self.weak_clone_fn.unwrap())(self.inner.as_ptr())
+    }
+}
+
+impl<T, const S: usize> Deref for RRTaskRef<T, S> {
+    type Target = RRTask<T, S>;
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.inner.as_ref() }
     }
 }
 
@@ -89,9 +132,25 @@ impl<T: Debug, const S: usize> Debug for RRTask<T, S> {
 
 impl<T: Debug, const S: usize> Debug for RRTaskRef<T, S> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("RRTaskRef")
-            .field("inner", self.as_ref())
-            .finish()
+        f.debug_struct("RRTaskRef").field("inner", self).finish()
+    }
+}
+
+#[repr(C)]
+pub struct WeakRRTaskRef<T, const S: usize> {
+    inner: NonNull<RRTask<T, S>>,
+}
+
+impl<T, const S: usize> WeakRRTaskRef<T, S> {
+    pub fn new(inner: NonNull<RRTask<T, S>>) -> Self {
+        Self { inner }
+    }
+}
+
+impl<T, const S: usize> Deref for WeakRRTaskRef<T, S> {
+    type Target = RRTask<T, S>;
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.inner.as_ref() }
     }
 }
 
@@ -138,17 +197,16 @@ impl<T, const S: usize, const CAPACITY: usize> BaseScheduler for RRScheduler<T, 
     }
 
     fn put_prev_task(&self, prev: Self::SchedItem, preempt: bool) {
-        let prev_raw_task = prev.as_ref();
-        if prev_raw_task.time_slice() > 0 && preempt {
+        if prev.time_slice() > 0 && preempt {
             let _ = self.ready_queue.push_front(prev);
         } else {
-            prev_raw_task.reset_time_slice();
+            prev.reset_time_slice();
             let _ = self.ready_queue.push_back(prev);
         }
     }
 
     fn task_tick(&self, current: &Self::SchedItem) -> bool {
-        let old_slice = current.as_ref().time_slice.fetch_sub(1, Ordering::Release);
+        let old_slice = current.time_slice.fetch_sub(1, Ordering::Release);
         old_slice <= 1
     }
 

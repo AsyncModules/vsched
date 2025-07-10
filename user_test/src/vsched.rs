@@ -1,4 +1,4 @@
-use base_task::{BaseTaskRef, Scheduler, TaskExtRef};
+use base_task::{BaseTaskRef, Scheduler, TaskExtRef, WeakBaseTaskRef};
 use config::AxCpuMask;
 use core::cell::UnsafeCell;
 use core::str::from_utf8;
@@ -6,7 +6,8 @@ use memmap2::MmapMut;
 use page_table_entry::MappingFlags;
 use std::cell::RefCell;
 use std::io::Read;
-use std::sync::{Arc, Mutex};
+use std::mem::MaybeUninit;
+use std::sync::Mutex;
 use std::thread_local;
 use std::{collections::VecDeque, sync::atomic::AtomicUsize};
 pub use vsched_apis::*;
@@ -63,7 +64,7 @@ pub fn map_vsched() -> Result<Vsched, ()> {
         let interp_path = from_utf8(interp).expect("Interpreter path isn't valid UTF-8");
         // remove trailing '\0'
         let _interp_path = interp_path.trim_matches(char::from(0)).to_string();
-        println!("Interpreter path: {:?}", _interp_path);
+        log::debug!("Interpreter path: {:?}", _interp_path);
     }
     let elf_base_addr = Some(vsched_so.as_ptr() as usize);
     // let relocate_pairs = elf_parser::get_relocate_pairs(&elf, elf_base_addr);
@@ -117,9 +118,8 @@ fn gc_entry() {
         let n = exited_tasks.len();
         for _ in 0..n {
             if let Some(task) = exited_tasks.pop_front() {
-                let arc_task = unsafe { Arc::from_raw(task.as_ref()) };
-                if Arc::strong_count(&arc_task) == 1 {
-                    drop(arc_task);
+                if task.strong_count() == 1 {
+                    drop(task);
                 } else {
                     exited_tasks.push_back(task);
                 }
@@ -139,42 +139,33 @@ pub fn run_idle() {
 pub fn init_vsched() {
     CPU_ID.set(CPU_ID_ALLOCATOR.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     let main_task = Task::new_init("main".into());
-    main_task
-        .as_ref()
-        .set_cpumask(AxCpuMask::one_shot(get_cpu_id()));
-    vsched_apis::init_vsched(get_cpu_id(), main_task);
-    let gc_task = Task::new(gc_entry, "gc".into(), config::TASK_STACK_SIZE);
-    gc_task
-        .as_ref()
-        .set_cpumask(AxCpuMask::one_shot(get_cpu_id()));
-    vsched_apis::spawn(gc_task);
+    main_task.set_cpumask(AxCpuMask::one_shot(get_cpu_id()));
     let idle_task = Task::new(|| run_idle(), "idle".into(), config::TASK_STACK_SIZE);
-    idle_task
-        .as_ref()
-        .set_cpumask(AxCpuMask::one_shot(get_cpu_id()));
-    vsched_apis::spawn(idle_task);
+    idle_task.set_cpumask(AxCpuMask::one_shot(get_cpu_id()));
+    vsched_apis::init_vsched(get_cpu_id(), idle_task, main_task);
+    let gc_task = Task::new(gc_entry, "gc".into(), config::TASK_STACK_SIZE);
+    gc_task.set_cpumask(AxCpuMask::one_shot(get_cpu_id()));
+    vsched_apis::spawn(gc_task);
 }
 
 pub fn init_vsched_secondary() {
     CPU_ID.set(CPU_ID_ALLOCATOR.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     let idle_task = Task::new_init("idle".into());
-    idle_task
-        .as_ref()
-        .set_cpumask(AxCpuMask::one_shot(get_cpu_id()));
-    vsched_apis::init_vsched_secondary(get_cpu_id(), idle_task);
+    idle_task.set_cpumask(AxCpuMask::one_shot(get_cpu_id()));
+    vsched_apis::init_vsched(get_cpu_id(), idle_task.clone(), idle_task);
 }
 
 pub fn blocked_resched(mut wq_guard: WaitQueueGuard) {
     let curr = vsched_apis::current(get_cpu_id());
-    assert!(curr.as_ref().is_running());
-    assert!(!curr.as_ref().is_idle());
+    assert!(curr.is_running());
+    assert!(!curr.is_idle());
 
-    curr.as_ref().set_state(base_task::TaskState::Blocked);
-    curr.as_ref().task_ext().set_in_wait_queue(true);
+    curr.set_state(base_task::TaskState::Blocked);
+    curr.task_ext().set_in_wait_queue(true);
     wq_guard.push_back(curr.clone());
     drop(wq_guard);
 
-    log::debug!("task blocked {:?}", curr.as_ref().task_ext().name());
+    log::debug!("task blocked {:?}", curr.task_ext().name());
     vsched_apis::resched(get_cpu_id());
 }
 
@@ -183,26 +174,29 @@ static WAIT_FOR_EXIT: WaitQueue = WaitQueue::new();
 
 pub fn exit(exit_code: i32) -> ! {
     let curr = vsched_apis::current(get_cpu_id());
-    assert!(curr.as_ref().is_running());
-    assert!(!curr.as_ref().is_idle());
-    log::debug!("{:?} is exited", curr.as_ref().task_ext().name());
-    if curr.as_ref().is_init() {
+    assert!(curr.is_running());
+    assert!(!curr.is_idle());
+    log::debug!("{:?} is exited", curr.task_ext().name());
+    if curr.is_init() {
         EXITED_TASKS.lock().unwrap().clear();
+        unsafe { libc::exit(0) };
     } else {
-        curr.as_ref().set_state(base_task::TaskState::Exited);
-        curr.as_ref().task_ext().notify_exit(exit_code);
-        EXITED_TASKS.lock().unwrap().push_back(curr);
+        curr.set_state(base_task::TaskState::Exited);
+        curr.task_ext().notify_exit(exit_code);
+        EXITED_TASKS.lock().unwrap().push_back(curr.clone());
         WAIT_FOR_EXIT.notify_one(false);
     }
+
     vsched_apis::resched(get_cpu_id());
     unreachable!()
 }
 
-const VSCHED_DATA_SIZE: usize =
-    (config::SMP * core::mem::size_of::<PerCPU>() + config::PAGES_SIZE_4K - 1)
-        & (!(config::PAGES_SIZE_4K - 1));
+const VSCHED_DATA_SIZE: usize = config::SMP
+    * ((core::mem::size_of::<PerCPU>() + config::PAGES_SIZE_4K - 1)
+        & (!(config::PAGES_SIZE_4K - 1)));
 
 #[allow(unused)]
+#[repr(C)]
 pub struct PerCPU {
     /// The ID of the CPU this run queue is associated with.
     pub cpu_id: usize,
@@ -215,5 +209,5 @@ pub struct PerCPU {
 
     pub idle_task: BaseTaskRef,
     /// Stores the weak reference to the previous task that is running on this CPU.
-    pub prev_task: UnsafeCell<BaseTaskRef>,
+    pub prev_task: UnsafeCell<MaybeUninit<WeakBaseTaskRef>>,
 }

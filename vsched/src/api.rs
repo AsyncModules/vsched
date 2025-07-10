@@ -1,6 +1,8 @@
+use core::mem::MaybeUninit;
+
 use crate::sched::select_run_queue_index;
 use crate::task::TaskInner;
-use crate::{get_data_base, percpu::PerCPU, sched::get_run_queue, select_run_queue};
+use crate::{percpu::PerCPU, sched::get_run_queue, select_run_queue};
 use config::RQ_CAP;
 
 cfg_if::cfg_if! {
@@ -8,26 +10,43 @@ cfg_if::cfg_if! {
         const MAX_TIME_SLICE: usize = 5;
         pub type BaseTask = scheduler::RRTask<TaskInner, MAX_TIME_SLICE>;
         pub type BaseTaskRef = scheduler::RRTaskRef<TaskInner, MAX_TIME_SLICE>;
+        pub type WeakBaseTaskRef = scheduler::WeakRRTaskRef<TaskInner, MAX_TIME_SLICE>;
+
         pub type Scheduler = scheduler::RRScheduler<TaskInner, MAX_TIME_SLICE, RQ_CAP>;
     } else if #[cfg(feature = "sched-cfs")] {
         pub type BaseTask = scheduler::CFSTask<TaskInner>;
         pub type BaseTaskRef = scheduler::CFSTaskRef<TaskInner>;
+        pub type WeakBaseTaskRef = scheduler::WeakCFSTaskRef<TaskInner>;
         pub type Scheduler = scheduler::CFScheduler<TaskInner, RQ_CAP>;
     } else {
         // If no scheduler features are set, use FIFO as the default.
         pub type BaseTask = scheduler::FifoTask<TaskInner>;
         pub type BaseTaskRef = scheduler::FiFoTaskRef<TaskInner>;
+        pub type WeakBaseTaskRef = scheduler::WeakFiFoTaskRef<TaskInner>;
         pub type Scheduler = scheduler::FifoScheduler<TaskInner, RQ_CAP>;
     }
 }
 
+/// Safety:
+///     the offset of this function in the `.text`
+///     section must be little than 0x1000.
+///     The `#[inline(never)]` attribute and the
+///     offset requirement can make it work ok.
+pub fn get_data_base() -> usize {
+    let pc = unsafe { hal::asm::get_pc() };
+    const VSCHED_DATA_SIZE: usize = config::SMP
+        * ((core::mem::size_of::<crate::percpu::PerCPU>() + config::PAGES_SIZE_4K - 1)
+            & (!(config::PAGES_SIZE_4K - 1)));
+    (pc & config::DATA_SEC_MASK) - VSCHED_DATA_SIZE
+}
+
 #[unsafe(no_mangle)]
-pub extern "C" fn prev_task(cpu_id: usize) -> BaseTaskRef {
+pub extern "C" fn prev_task(cpu_id: usize) -> &'static WeakBaseTaskRef {
     unsafe {
         crate::get_run_queue(cpu_id)
             .prev_task
             .as_ref_unchecked()
-            .clone()
+            .assume_init_ref()
     }
 }
 
@@ -37,32 +56,17 @@ pub extern "C" fn prev_task(cpu_id: usize) -> BaseTaskRef {
 ///
 /// Panics if the current task is not initialized.
 #[unsafe(no_mangle)]
-pub extern "C" fn current(cpu_id: usize) -> BaseTaskRef {
-    unsafe {
-        crate::get_run_queue(cpu_id)
-            .current_task
-            .as_ref_unchecked()
-            .clone()
-    }
+pub extern "C" fn current(cpu_id: usize) -> &'static BaseTaskRef {
+    unsafe { crate::get_run_queue(cpu_id).current_task.as_ref_unchecked() }
 }
 
 /// Initializes the task scheduler (for the primary CPU).
 #[unsafe(no_mangle)]
-pub extern "C" fn init_vsched(cpu_id: usize, idle_task: BaseTaskRef) {
-    let per_cpu_base = get_data_base() as *mut PerCPU;
+pub extern "C" fn init_vsched(cpu_id: usize, idle_task: BaseTaskRef, boot_task: BaseTaskRef) {
+    let per_cpu_base = get_data_base() as *mut MaybeUninit<PerCPU>;
     unsafe {
         let per_cpu = per_cpu_base.add(cpu_id);
-        *per_cpu = PerCPU::new(cpu_id, idle_task);
-    }
-}
-
-/// Initializes the task scheduler for secondary CPUs.
-#[unsafe(no_mangle)]
-pub extern "C" fn init_vsched_secondary(cpu_id: usize, idle_task: BaseTaskRef) {
-    let per_cpu_base = get_data_base() as *mut PerCPU;
-    unsafe {
-        let per_cpu = per_cpu_base.add(cpu_id);
-        *per_cpu = PerCPU::new(cpu_id, idle_task);
+        *per_cpu = MaybeUninit::new(PerCPU::new(cpu_id, idle_task, boot_task));
     }
 }
 
@@ -117,6 +121,6 @@ pub extern "C" fn resched_f(cpu_id: usize) -> bool {
 /// Wake up a task to the distination cpu,
 #[unsafe(no_mangle)]
 pub extern "C" fn unblock_task(task: BaseTaskRef, resched: bool, src_cpu_id: usize) {
-    let dst_cpu_id = select_run_queue_index(task.as_ref().cpumask());
+    let dst_cpu_id = select_run_queue_index(task.cpumask());
     get_run_queue(dst_cpu_id).unblock_task(task, resched, src_cpu_id);
 }

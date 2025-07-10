@@ -19,9 +19,9 @@ extern crate alloc;
 #[cfg(test)]
 mod tests;
 
-pub use cfs::{CFSTask, CFSTaskRef, CFScheduler};
-pub use fifo::{FiFoTaskRef, FifoScheduler, FifoTask};
-pub use round_robin::{RRScheduler, RRTask, RRTaskRef};
+pub use cfs::{CFSTask, CFSTaskRef, CFScheduler, WeakCFSTaskRef};
+pub use fifo::{FiFoTaskRef, FifoScheduler, FifoTask, WeakFiFoTaskRef};
+pub use round_robin::{RRScheduler, RRTask, RRTaskRef, WeakRRTaskRef};
 
 /// The base scheduler trait that all schedulers should implement.
 ///

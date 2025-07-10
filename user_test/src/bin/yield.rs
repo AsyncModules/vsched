@@ -12,4 +12,5 @@ fn main() {
     ));
     vsched_apis::yield_now(get_cpu_id());
     println!("back to idle task");
+    exit(0)
 }

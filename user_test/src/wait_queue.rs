@@ -53,20 +53,20 @@ impl WaitQueue {
 
     /// Cancel events by removing the task from the wait queue.
     /// If `from_timer_list` is true, try to remove the task from the timer list.
-    fn cancel_events(&self, curr: BaseTaskRef, _from_timer_list: bool) {
+    fn cancel_events(&self, curr: &BaseTaskRef, _from_timer_list: bool) {
         // A task can be wake up only one events (timer or `notify()`), remove
         // the event from another queue.
-        if curr.as_ref().task_ext().in_wait_queue() {
+        if curr.task_ext().in_wait_queue() {
             // wake up by timer (timeout).
             self.queue.lock().unwrap().retain(|t| !curr.ptr_eq(t));
-            curr.as_ref().task_ext().set_in_wait_queue(false);
+            curr.task_ext().set_in_wait_queue(false);
         }
 
         // Try to cancel a timer event from timer lists.
         // Just mark task's current timer ticket ID as expired.
         #[cfg(feature = "irq")]
         if _from_timer_list {
-            curr.as_ref().task_ext().timer_ticket_expired();
+            curr.task_ext().timer_ticket_expired();
             // Note:
             //  this task is still not removed from timer list of target CPU,
             //  which may cause some redundant timer events because it still needs to
@@ -331,11 +331,11 @@ impl WaitQueue {
 
 fn unblock_one_task(task: BaseTaskRef, resched: bool) {
     // Mark task as not in wait queue.
-    task.as_ref().task_ext().set_in_wait_queue(false);
+    task.task_ext().set_in_wait_queue(false);
     log::debug!(
         "unblock task {:?}, is on cpu {}",
-        task.as_ref().task_ext().name(),
-        task.as_ref().on_cpu()
+        task.task_ext().name(),
+        task.on_cpu()
     );
     // Select run queue by the CPU set of the task.
     // Use `NoOp` kernel guard here because the function is called with holding the

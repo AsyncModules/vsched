@@ -8,7 +8,9 @@ use core::sync::atomic::{AtomicBool, AtomicI32};
 use std::ptr::NonNull;
 use std::sync::Arc;
 
-use base_task::{BaseTask, BaseTaskRef, TaskExtRef, TaskInner, TaskStack, TaskState};
+use base_task::{
+    BaseTask, BaseTaskRef, TaskExtRef, TaskInner, TaskStack, TaskState, WeakBaseTaskRef,
+};
 
 /// Task extended data for the monolithic kernel.
 pub struct TaskExt {
@@ -121,6 +123,30 @@ base_task::def_task_ext!(TaskExt);
 
 pub struct Task;
 
+pub extern "C" fn task_clone(raw_ptr: *const BaseTask) {
+    unsafe {
+        let _arc_task = core::mem::ManuallyDrop::new(Arc::from_raw(raw_ptr));
+        let _ = core::mem::ManuallyDrop::new(_arc_task.clone());
+    }
+}
+
+pub extern "C" fn task_drop(raw_ptr: *const BaseTask) {
+    let _arc_task = unsafe { Arc::from_raw(raw_ptr) };
+    drop(_arc_task);
+}
+
+pub extern "C" fn task_strong_count(raw_ptr: *const BaseTask) -> usize {
+    let _arc_task = unsafe { std::mem::ManuallyDrop::new(Arc::from_raw(raw_ptr)) };
+    let count = Arc::strong_count(&_arc_task);
+    count
+}
+
+pub extern "C" fn task_weak_clone(raw_ptr: *const BaseTask) -> WeakBaseTaskRef {
+    let _arc_task = unsafe { std::mem::ManuallyDrop::new(Arc::from_raw(raw_ptr)) };
+    let weak_task_ptr = Arc::downgrade(&_arc_task).into_raw() as _;
+    WeakBaseTaskRef::new(NonNull::new(weak_task_ptr).unwrap())
+}
+
 impl Task {
     // /// Wait for the task to exit, and return the exit code.
     // ///
@@ -145,7 +171,13 @@ impl Task {
         let kstack_top = t.kernel_stack_top().unwrap();
         t.ctx_mut().init(task_entry as usize, kstack_top);
 
-        BaseTaskRef::new(NonNull::new(Arc::into_raw(Arc::new(BaseTask::new(t))) as _).unwrap())
+        BaseTaskRef::new(
+            NonNull::new(Arc::into_raw(Arc::new(BaseTask::new(t))) as _).unwrap(),
+            task_clone,
+            task_weak_clone,
+            task_drop,
+            task_strong_count,
+        )
     }
 
     pub fn new_init(name: String) -> BaseTaskRef {
@@ -157,30 +189,29 @@ impl Task {
         }
         t.set_state(TaskState::Running);
         t.init_task_ext(TaskExt::new_init(name));
-        BaseTaskRef::new(NonNull::new(Arc::into_raw(Arc::new(BaseTask::new(t))) as _).unwrap())
+        BaseTaskRef::new(
+            NonNull::new(Arc::into_raw(Arc::new(BaseTask::new(t))) as _).unwrap(),
+            task_clone,
+            task_weak_clone,
+            task_drop,
+            task_strong_count,
+        )
     }
 }
 
-pub fn wait(task_ref: BaseTaskRef) -> Option<i32> {
+pub fn join(task_ref: BaseTaskRef) -> Option<i32> {
     task_ref
-        .as_ref()
         .task_ext()
         .wait_for_exit
-        .wait_until(|| task_ref.as_ref().state() == TaskState::Exited);
-    Some(
-        task_ref
-            .as_ref()
-            .task_ext()
-            .exit_code
-            .load(Ordering::Acquire),
-    )
+        .wait_until(|| task_ref.state() == TaskState::Exited);
+    Some(task_ref.task_ext().exit_code.load(Ordering::Acquire))
 }
 
 extern "C" fn task_entry() {
     let prev_task = vsched_apis::prev_task(get_cpu_id());
-    prev_task.as_ref().set_on_cpu(false);
+    prev_task.set_on_cpu(false);
     let task = vsched_apis::current(get_cpu_id());
-    if let Some(entry) = task.as_ref().task_ext().entry {
+    if let Some(entry) = task.task_ext().entry {
         unsafe { Box::from_raw(entry)() };
     }
     crate::vsched::exit(0);

@@ -15,4 +15,5 @@ fn main() {
         ));
     }
     println!("spawn test ok");
+    exit(0)
 }

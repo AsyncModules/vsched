@@ -1,3 +1,5 @@
+use core::mem::MaybeUninit;
+
 use crate::api::BaseTaskRef;
 use crate::percpu::PerCPU;
 use config::AxCpuMask;
@@ -85,7 +87,7 @@ pub fn get_run_queue(index: usize) -> &'static PerCPU {
 pub(crate) fn select_run_queue(task: &BaseTaskRef) -> &'static PerCPU {
     
     // When SMP is enabled, select the run queue based on the task's CPU affinity and load balance.
-    let index = select_run_queue_index(task.as_ref().cpumask());
+    let index = select_run_queue_index(task.cpumask());
     get_run_queue(index)
 }
 
@@ -100,16 +102,15 @@ impl PerCPU {
     /// otherwise `false`.
     fn put_task_with_state(
         &self,
-        task: &BaseTaskRef,
+        task: BaseTaskRef,
         current_state: TaskState,
         preempt: bool,
     ) -> bool {
         // If the task's state matches `current_state`, set its state to `Ready` and
         // put it back to the run queue (except idle task).
         if task
-            .as_ref()
             .transition_state(current_state, TaskState::Ready)
-            && !task.as_ref().is_idle()
+            && !task.is_idle()
         {
             // If the task is blocked, wait for the task to finish its scheduling process.
             // See `unblock_task()` for details.
@@ -124,7 +125,7 @@ impl PerCPU {
                 // 1. This should be placed after the judgement of `TaskState::Blocked,`,
                 //    because the task may have been woken up by other cores.
                 // 2. This can be placed in the front of `switch_to()`
-                while task.as_ref().on_cpu() {
+                while task.on_cpu() {
                     // Wait for the task to finish its scheduling process.
                     core::hint::spin_loop();
                 }
@@ -141,7 +142,7 @@ impl PerCPU {
     ///
     /// This function is used to add a new task to the scheduler.
     pub fn add_task(&self, task: BaseTaskRef) {
-        assert!(task.as_ref().is_ready());
+        assert!(task.is_ready());
         self.scheduler.add_task(task);
     }
 
@@ -150,13 +151,13 @@ impl PerCPU {
     /// This function does nothing if the task is not in [`TaskState::Blocked`],
     /// which means the task is already unblocked by other cores.
     pub fn unblock_task(&self, task: BaseTaskRef, resched: bool, src_cpu_id: usize) {
-        let _task_id = task.as_ref().id();
+        let _task_id = task.id();
         // Try to change the state of the task from `Blocked` to `Ready`,
         // if successful, the task will be put into this run queue,
         // otherwise, the task is already unblocked by other cores.
         // Note:
         // target task can not be insert into the run queue until it finishes its scheduling process.
-        if self.put_task_with_state(&task, TaskState::Blocked, resched) {
+        if self.put_task_with_state(task, TaskState::Blocked, resched) {
             // Since now, the task to be unblocked is in the `Ready` state.
             // Note: when the task is unblocked on another CPU's run queue,
             // we just ingiore the `resched` flag.
@@ -166,7 +167,6 @@ impl PerCPU {
                     get_run_queue(src_cpu_id)
                     .current_task
                     .as_ref_unchecked()
-                    .as_ref()
                     .set_preempt_pending(true);
                 };
             }
@@ -180,9 +180,9 @@ impl PerCPU {
     /// and reschedule to the next task on this run queue.
     pub fn yield_current(&self) {
         let curr = unsafe { self.current_task.as_ref_unchecked() };
-        assert!(curr.as_ref().is_running());
+        assert!(curr.is_running());
 
-        self.put_task_with_state(curr, TaskState::Running, false);
+        self.put_task_with_state(curr.clone(), TaskState::Running, false);
 
         self.resched();
     }
@@ -200,43 +200,43 @@ impl PerCPU {
             self.idle_task.clone()
         );
         assert!(
-            next.as_ref().is_ready(),
+            next.is_ready(),
             "next {:?} is not ready: {:?}",
-            next.as_ref().id(),
-            next.as_ref().state()
+            next.id(),
+            next.state()
         );
         self.switch_to(unsafe { self.current_task.as_ref_unchecked() }, next);
     }
 
     pub(crate) fn switch_to(&self, prev_task: &BaseTaskRef, next_task: BaseTaskRef) {
-        next_task.as_ref().set_preempt_pending(false);
-        next_task.as_ref().set_state(TaskState::Running);
+        next_task.set_preempt_pending(false);
+        next_task.set_state(TaskState::Running);
         if prev_task.ptr_eq(&next_task) {
             return;
         }
 
         // Claim the task as running, we do this before switching to it
         // such that any running task will have this set.
-        next_task.as_ref().set_on_cpu(true);
+        next_task.set_on_cpu(true);
 
         unsafe {
-            let prev_ctx_ptr = prev_task.as_ref().ctx_mut_ptr();
-            let next_ctx_ptr = next_task.as_ref().ctx_mut_ptr();
+            let prev_ctx_ptr = prev_task.ctx_mut_ptr();
+            let next_ctx_ptr = next_task.ctx_mut_ptr();
             // TODO:
             // If the next task is a coroutine, this will set the kstack and ctx.
-            next_task.as_ref().set_kstack();
+            next_task.set_kstack();
 
             // Store the weak pointer of **prev_task** in percpu variable `PREV_TASK`.
-            self.prev_task.replace(prev_task.clone());
+            self.prev_task.replace(MaybeUninit::new(prev_task.weak_clone()));
 
-            *self.current_task.as_mut_unchecked() = next_task;
-            // CurrentTask::set_current(prev_task, next_task);
+            self.current_task.replace(next_task);
+
 
             (*prev_ctx_ptr).switch_to(&*next_ctx_ptr);
 
             // Current it's **next_task** running on this CPU, clear the `prev_task`'s `on_cpu` field
             // to indicate that it has finished its scheduling process and no longer running on this CPU.
-            self.prev_task.as_ref_unchecked().as_ref().set_on_cpu(false);
+            self.prev_task.as_ref_unchecked().assume_init_ref().set_on_cpu(false);
         }
     }
 
@@ -250,27 +250,26 @@ impl PerCPU {
             self.idle_task.clone()
         );
         assert!(
-            next_task.as_ref().is_ready(),
+            next_task.is_ready(),
             "next {:?} is not ready: {:?}",
-            next_task.as_ref().id(),
-            next_task.as_ref().state()
+            next_task.id(),
+            next_task.state()
         );
         let prev_task = unsafe { self.current_task.as_ref_unchecked() };
         
-        next_task.as_ref().set_preempt_pending(false);
-        next_task.as_ref().set_state(TaskState::Running);
+        next_task.set_preempt_pending(false);
+        next_task.set_state(TaskState::Running);
         if prev_task.ptr_eq(&next_task) {
             return true;
         }
 
         // Claim the task as running, we do this before switching to it
         // such that any running task will have this set.
-        next_task.as_ref().set_on_cpu(true);
+        next_task.set_on_cpu(true);
 
         unsafe {
             
-            self.prev_task.replace(prev_task.clone());
-                
+            self.prev_task.replace(MaybeUninit::new(prev_task.weak_clone()));                
 
             // // The strong reference count of `prev_task` will be decremented by 1,
             // // but won't be dropped until `gc_entry()` is called.
