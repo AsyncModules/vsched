@@ -8,12 +8,13 @@ use core::sync::atomic::{AtomicBool, AtomicI32};
 use std::ptr::NonNull;
 use std::sync::Arc;
 
-use base_task::{
-    BaseTask, BaseTaskRef, TaskExtRef, TaskInner, TaskStack, TaskState, WeakBaseTaskRef,
-};
+use base_task::{BaseTask, BaseTaskRef, TaskInner, TaskStack, TaskState, WeakBaseTaskRef};
+
+pub use base_task::TaskExtRef;
 
 /// Task extended data for the monolithic kernel.
 pub struct TaskExt {
+    base: NonNull<BaseTask>,
     // 以下字段都需要在 TaskExt 中定义
     name: String,
     entry: Option<*mut dyn FnOnce()>,
@@ -98,6 +99,7 @@ impl TaskExt {
         F: FnOnce() + Send + 'static,
     {
         Self {
+            base: NonNull::dangling(),
             name,
             entry: Some(Box::into_raw(Box::new(entry))),
             in_wait_queue: AtomicBool::new(false),
@@ -109,6 +111,7 @@ impl TaskExt {
 
     pub fn new_init(name: String) -> Self {
         Self {
+            base: NonNull::dangling(),
             name,
             entry: None,
             in_wait_queue: AtomicBool::new(false),
@@ -116,6 +119,13 @@ impl TaskExt {
             wait_for_exit: WaitQueue::new(),
             future: UnsafeCell::new(None),
         }
+    }
+
+    pub fn join(&self) -> Option<i32> {
+        let task_ref = unsafe { &*self.base.as_ptr() };
+        self.wait_for_exit
+            .wait_until(|| task_ref.state() == TaskState::Exited);
+        Some(task_ref.task_ext().exit_code.load(Ordering::Acquire))
     }
 }
 
@@ -170,9 +180,15 @@ impl Task {
         }
         let kstack_top = t.kernel_stack_top().unwrap();
         t.ctx_mut().init(task_entry as usize, kstack_top);
+        let arc_task = Arc::new(BaseTask::new(t));
+        let task_raw_ptr = Arc::into_raw(arc_task);
+        unsafe {
+            (&mut *((&*task_raw_ptr).task_ext_ptr() as *mut TaskExt)).base =
+                NonNull::new(task_raw_ptr as _).unwrap();
+        }
 
         BaseTaskRef::new(
-            NonNull::new(Arc::into_raw(Arc::new(BaseTask::new(t))) as _).unwrap(),
+            NonNull::new(task_raw_ptr as _).unwrap(),
             task_clone,
             task_weak_clone,
             task_drop,
@@ -189,22 +205,21 @@ impl Task {
         }
         t.set_state(TaskState::Running);
         t.init_task_ext(TaskExt::new_init(name));
+        let arc_task = Arc::new(BaseTask::new(t));
+        let task_raw_ptr = Arc::into_raw(arc_task);
+        unsafe {
+            (&mut *((&*task_raw_ptr).task_ext_ptr() as *mut TaskExt)).base =
+                NonNull::new(task_raw_ptr as _).unwrap();
+        }
+
         BaseTaskRef::new(
-            NonNull::new(Arc::into_raw(Arc::new(BaseTask::new(t))) as _).unwrap(),
+            NonNull::new(task_raw_ptr as _).unwrap(),
             task_clone,
             task_weak_clone,
             task_drop,
             task_strong_count,
         )
     }
-}
-
-pub fn join(task_ref: BaseTaskRef) -> Option<i32> {
-    task_ref
-        .task_ext()
-        .wait_for_exit
-        .wait_until(|| task_ref.state() == TaskState::Exited);
-    Some(task_ref.task_ext().exit_code.load(Ordering::Acquire))
 }
 
 extern "C" fn task_entry() {

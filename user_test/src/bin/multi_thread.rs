@@ -22,7 +22,7 @@ fn main() {
         "main spawn_test".into(),
         config::TASK_STACK_SIZE,
     ));
-    join(task_handle).unwrap();
+    task_handle.task_ext().join().unwrap();
     println!("main task wait ok");
     exit(0)
 }

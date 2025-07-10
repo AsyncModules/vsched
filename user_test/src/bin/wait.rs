@@ -14,7 +14,7 @@ fn main() {
     let task2 = Task::new(
         move || {
             println!("wait task start");
-            join(task1_clone);
+            task1_clone.task_ext().join();
             println!("wait task ok");
         },
         "task__2".into(),
@@ -26,7 +26,7 @@ fn main() {
     vsched_apis::yield_now(get_cpu_id());
 
     println!("back to idle task");
-    join(t1);
-    join(t2);
+    t1.task_ext().join();
+    t2.task_ext().join();
     exit(0)
 }
