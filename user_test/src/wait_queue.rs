@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use base_task::{BaseTaskRef, TaskExtRef};
 use std::sync::{Mutex, MutexGuard};
 
-use crate::get_cpu_id;
+use crate::{BlockedReschedFuture, get_cpu_id};
 
 // use crate::{CurrentTask, current_run_queue, select_run_queue};
 
@@ -81,16 +81,16 @@ impl WaitQueue {
         let wq = self.queue.lock().unwrap();
         let curr = vsched_apis::current(get_cpu_id());
         crate::vsched::blocked_resched(wq);
-        self.cancel_events(curr, false);
+        self.cancel_events(&curr, false);
     }
 
-    // /// Blocks the current coroutine task and put it into the wait queue, until other task
-    // /// notifies it.
-    // pub async fn wait_f(&self) {
-    //     let rq = current_run_queue::<NoPreemptIrqSave>();
-    //     crate::run_queue::BlockedReschedFuture::new(rq, self).await;
-    //     self.cancel_events(crate::current(), false);
-    // }
+    /// Blocks the current coroutine task and put it into the wait queue, until other task
+    /// notifies it.
+    pub async fn wait_f(&self) {
+        let curr = vsched_apis::current(get_cpu_id());
+        BlockedReschedFuture::new(self).await;
+        self.cancel_events(&curr, false);
+    }
 
     /// Blocks the current task and put it into the wait queue, until the given
     /// `condition` becomes true.
@@ -110,29 +110,28 @@ impl WaitQueue {
             crate::vsched::blocked_resched(wq);
             // Preemption may occur here.
         }
-        self.cancel_events(curr, false);
+        self.cancel_events(&curr, false);
     }
 
-    // /// Blocks the current coroutine task and put it into the wait queue, until the given
-    // /// `condition` becomes true.
-    // ///
-    // /// Note that even other tasks notify this task, it will not wake up until
-    // /// the condition becomes true.
-    // pub async fn wait_until_f<F>(&self, condition: F)
-    // where
-    //     F: Fn() -> bool,
-    // {
-    //     let curr = crate::current();
-    //     loop {
-    //         let rq = current_run_queue::<NoPreemptIrqSave>();
-    //         if condition() {
-    //             break;
-    //         }
-    //         crate::run_queue::BlockedReschedFuture::new(rq, self).await;
-    //         // Preemption may occur here.
-    //     }
-    //     self.cancel_events(curr, false);
-    // }
+    /// Blocks the current coroutine task and put it into the wait queue, until the given
+    /// `condition` becomes true.
+    ///
+    /// Note that even other tasks notify this task, it will not wake up until
+    /// the condition becomes true.
+    pub async fn wait_until_f<F>(&self, condition: F)
+    where
+        F: Fn() -> bool,
+    {
+        let curr = vsched_apis::current(get_cpu_id());
+        loop {
+            if condition() {
+                break;
+            }
+            BlockedReschedFuture::new(self).await;
+            // Preemption may occur here.
+        }
+        self.cancel_events(&curr, false);
+    }
 
     // /// Blocks the current task and put it into the wait queue, until other tasks
     // /// notify it, or the given duration has elapsed.

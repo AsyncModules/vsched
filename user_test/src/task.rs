@@ -1,12 +1,12 @@
-use crate::get_cpu_id;
 use crate::wait_queue::WaitQueue;
+use crate::{exit_f, get_cpu_id};
 use core::cell::UnsafeCell;
 #[cfg(feature = "irq")]
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering;
 use core::sync::atomic::{AtomicBool, AtomicI32};
 use std::ptr::NonNull;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use base_task::{BaseTask, BaseTaskRef, TaskInner, TaskStack, TaskState, WeakBaseTaskRef};
 
@@ -33,6 +33,9 @@ pub struct TaskExt {
     /// The future of coroutine task.
     pub future: UnsafeCell<Option<core::pin::Pin<Box<dyn Future<Output = ()> + Send + 'static>>>>,
 }
+
+unsafe impl Send for TaskExt {}
+unsafe impl Sync for TaskExt {}
 
 impl TaskExt {
     /// Gets the name of the task.
@@ -109,6 +112,24 @@ impl TaskExt {
         }
     }
 
+    pub fn new_f<F>(future: F, name: String) -> Self
+    where
+        F: Future + Send + 'static,
+    {
+        Self {
+            base: NonNull::dangling(),
+            name,
+            entry: None,
+            in_wait_queue: AtomicBool::new(false),
+            exit_code: AtomicI32::new(0),
+            wait_for_exit: WaitQueue::new(),
+            future: UnsafeCell::new(Some(Box::pin(async {
+                future.await;
+                exit_f(0).await;
+            }))),
+        }
+    }
+
     pub fn new_init(name: String) -> Self {
         Self {
             base: NonNull::dangling(),
@@ -126,6 +147,19 @@ impl TaskExt {
         self.wait_for_exit
             .wait_until(|| task_ref.state() == TaskState::Exited);
         Some(task_ref.task_ext().exit_code.load(Ordering::Acquire))
+    }
+
+    pub async fn join_f(&self) -> Option<i32> {
+        let task_ref = unsafe { &*self.base.as_ptr() };
+        self.wait_for_exit
+            .wait_until_f(|| task_ref.state() == TaskState::Exited)
+            .await;
+        Some(task_ref.task_ext().exit_code.load(Ordering::Acquire))
+    }
+
+    pub fn id_name(&self) -> String {
+        let task_ref = unsafe { &*self.base.as_ptr() };
+        format!("task({}, {:?})", task_ref.id().as_u64(), self.name)
     }
 }
 
@@ -196,6 +230,30 @@ impl Task {
         )
     }
 
+    pub fn new_f<F>(future: F, name: String) -> BaseTaskRef
+    where
+        F: Future + Send + 'static,
+    {
+        let mut t = TaskInner::new();
+        t.set_alloc_stack_fn(alloc_stack_for_coroutine as usize);
+        t.set_coroutine_schedule(coroutine_schedule as usize);
+        t.init_task_ext(TaskExt::new_f(future, name));
+        let arc_task = Arc::new(BaseTask::new(t));
+        let task_raw_ptr = Arc::into_raw(arc_task);
+        unsafe {
+            (&mut *((&*task_raw_ptr).task_ext_ptr() as *mut TaskExt)).base =
+                NonNull::new(task_raw_ptr as _).unwrap();
+        }
+
+        BaseTaskRef::new(
+            NonNull::new(task_raw_ptr as _).unwrap(),
+            task_clone,
+            task_weak_clone,
+            task_drop,
+            task_strong_count,
+        )
+    }
+
     pub fn new_init(name: String) -> BaseTaskRef {
         let mut t = TaskInner::new();
         t.set_init(true);
@@ -230,4 +288,68 @@ extern "C" fn task_entry() {
         unsafe { Box::from_raw(entry)() };
     }
     crate::vsched::exit(0);
+}
+
+thread_local! {
+    static COROUTINE_STACK_POOL: Mutex<alloc::vec::Vec<TaskStack>> = Mutex::new(alloc::vec::Vec::new());
+}
+
+/// Alloc a stack for running a coroutine.
+/// If the `COROUTINE_STACK_POOL` is empty,
+/// it will alloc a new stack on the allocator.
+fn alloc_stack_for_coroutine() -> TaskStack {
+    log::debug!("alloc stack");
+    COROUTINE_STACK_POOL.with(|stack_pool| {
+        stack_pool
+            .lock()
+            .unwrap()
+            .pop()
+            .unwrap_or_else(|| TaskStack::alloc(config::TASK_STACK_SIZE))
+    })
+}
+
+/// Recycle the stack after the coroutine running to a certain stage.
+fn recycle_stack_of_coroutine(stack: TaskStack) {
+    log::debug!("recycle task");
+    COROUTINE_STACK_POOL.with(|stack_pool| stack_pool.lock().unwrap().push(stack))
+}
+
+extern "C" fn coroutine_schedule() {
+    use core::task::{Context, Waker};
+    loop {
+        vsched_apis::prev_task(get_cpu_id()).set_on_cpu(false);
+        let waker = Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        let curr = vsched_apis::current(get_cpu_id());
+        let fut = unsafe {
+            curr.task_ext()
+                .future
+                .as_mut_unchecked()
+                .as_mut()
+                .expect("The task should be a coroutine")
+        };
+        let _res = fut.as_mut().poll(&mut cx);
+        assert!(
+            !curr.is_running(),
+            "{} is not running",
+            curr.task_ext().id_name()
+        );
+        let prev_task = curr;
+        let stack = unsafe { &mut *prev_task.kernel_stack() }
+            .take()
+            .expect("The stack should be taken out after running.");
+        let next_task = vsched_apis::current(get_cpu_id());
+        let next_stack = unsafe { &mut *next_task.kernel_stack() };
+        if next_stack.is_none() && !next_task.is_init() && !next_task.is_idle() {
+            next_stack.replace(stack);
+        } else {
+            unsafe {
+                let prev_ctx_ptr = prev_task.ctx_mut_ptr();
+                let next_ctx_ptr = next_task.ctx_mut_ptr();
+                recycle_stack_of_coroutine(stack);
+                (*prev_ctx_ptr).switch_to(&*next_ctx_ptr);
+                panic!("Should never reach here.");
+            }
+        }
+    }
 }

@@ -1,3 +1,4 @@
+#![feature(unsafe_cell_access)]
 extern crate alloc;
 
 mod task;
