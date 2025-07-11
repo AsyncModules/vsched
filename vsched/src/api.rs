@@ -1,7 +1,7 @@
 use core::mem::MaybeUninit;
 
 use crate::sched::select_run_queue_index;
-use crate::task::TaskInner;
+use crate::task::{TaskInner, TaskState};
 use crate::{percpu::PerCPU, sched::get_run_queue, select_run_queue};
 use config::RQ_CAP;
 
@@ -56,8 +56,13 @@ pub extern "C" fn prev_task(cpu_id: usize) -> &'static WeakBaseTaskRef {
 ///
 /// Panics if the current task is not initialized.
 #[unsafe(no_mangle)]
-pub extern "C" fn current(cpu_id: usize) -> &'static BaseTaskRef {
-    unsafe { crate::get_run_queue(cpu_id).current_task.as_ref_unchecked() }
+pub extern "C" fn current(cpu_id: usize) -> BaseTaskRef {
+    unsafe {
+        crate::get_run_queue(cpu_id)
+            .current_task
+            .as_ref_unchecked()
+            .clone()
+    }
 }
 
 /// Initializes the task scheduler (for the primary CPU).
@@ -123,4 +128,14 @@ pub extern "C" fn resched_f(cpu_id: usize) -> bool {
 pub extern "C" fn unblock_task(task: BaseTaskRef, resched: bool, src_cpu_id: usize) {
     let dst_cpu_id = select_run_queue_index(task.cpumask());
     get_run_queue(dst_cpu_id).unblock_task(task, resched, src_cpu_id);
+}
+
+/// yield future
+#[unsafe(no_mangle)]
+pub extern "C" fn yield_f(cpu_id: usize) -> bool {
+    let per_cpu = get_run_queue(cpu_id);
+    let curr = unsafe { per_cpu.current_task.as_ref_unchecked() };
+    assert!(curr.is_running());
+    per_cpu.put_task_with_state(curr.clone(), TaskState::Running, false);
+    per_cpu.resched_f()
 }
