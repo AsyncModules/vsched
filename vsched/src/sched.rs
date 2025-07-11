@@ -100,7 +100,7 @@ impl PerCPU {
     ///
     /// Returns `true` if the target task is put into this run queue successfully,
     /// otherwise `false`.
-    fn put_task_with_state(
+    pub(crate) fn put_task_with_state(
         &self,
         task: BaseTaskRef,
         current_state: TaskState,
@@ -131,7 +131,7 @@ impl PerCPU {
                 }
             }
             // TODO: priority
-            self.scheduler.put_prev_task(task.clone(), preempt);
+            self.scheduler.put_prev_task(task, preempt);
             true
         } else {
             false
@@ -260,7 +260,7 @@ impl PerCPU {
         next_task.set_preempt_pending(false);
         next_task.set_state(TaskState::Running);
         if prev_task.ptr_eq(&next_task) {
-            return true;
+            return false;
         }
 
         // Claim the task as running, we do this before switching to it
@@ -279,7 +279,7 @@ impl PerCPU {
             // Directly change the `CurrentTask` and return `Pending`.
             // CurrentTask::set_current(prev_task, next_task);
             *self.current_task.as_mut_unchecked() = next_task;
-            false
+            true
         }
     }
 }
