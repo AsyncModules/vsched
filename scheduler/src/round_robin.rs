@@ -78,14 +78,6 @@ impl<T, const S: usize> Drop for RRTaskRef<T, S> {
 }
 
 impl<T, const S: usize> RRTaskRef<T, S> {
-    pub const EMPTY: Self = Self {
-        inner: NonNull::dangling(),
-        clone_fn: None,
-        weak_clone_fn: None,
-        drop_fn: None,
-        strong_count_fn: None,
-    };
-
     pub fn new(
         inner: NonNull<RRTask<T, S>>,
         clone_fn: extern "C" fn(*const RRTask<T, S>),
@@ -112,6 +104,10 @@ impl<T, const S: usize> RRTaskRef<T, S> {
 
     pub fn weak_clone(&self) -> WeakRRTaskRef<T, S> {
         (self.weak_clone_fn.unwrap())(self.inner.as_ptr())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner == NonNull::dangling()
     }
 }
 

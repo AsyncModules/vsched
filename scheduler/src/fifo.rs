@@ -63,14 +63,6 @@ impl<T> Drop for FiFoTaskRef<T> {
 }
 
 impl<T> FiFoTaskRef<T> {
-    pub const EMPTY: Self = Self {
-        inner: NonNull::dangling(),
-        clone_fn: None,
-        weak_clone_fn: None,
-        drop_fn: None,
-        strong_count_fn: None,
-    };
-
     pub fn new(
         inner: NonNull<FifoTask<T>>,
         clone_fn: extern "C" fn(*const FifoTask<T>),
@@ -97,6 +89,10 @@ impl<T> FiFoTaskRef<T> {
 
     pub fn weak_clone(&self) -> WeakFiFoTaskRef<T> {
         (self.weak_clone_fn.unwrap())(self.inner.as_ptr())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner == NonNull::dangling()
     }
 }
 
