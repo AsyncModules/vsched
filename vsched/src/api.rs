@@ -101,6 +101,12 @@ pub extern "C" fn set_priority(prio: isize, cpu_id: usize) -> bool {
     get_run_queue(cpu_id).set_current_priority(prio)
 }
 
+/// task tick
+#[unsafe(no_mangle)]
+pub extern "C" fn task_tick(cpu_id: usize, task_ref: &BaseTaskRef) -> bool {
+    get_run_queue(cpu_id).task_tick(task_ref)
+}
+
 /// Current task gives up the CPU time voluntarily, and switches to another
 /// ready task.
 #[unsafe(no_mangle)]

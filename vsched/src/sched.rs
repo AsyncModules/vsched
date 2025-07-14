@@ -173,8 +173,10 @@ impl PerCPU {
         }
     }
 
+    pub fn task_tick(&self, task: &BaseTaskRef) -> bool {
+        self.scheduler.task_tick(task)
+    }
     
-
     /// Yield the current task and reschedule.
     /// This function will put the current task into this run queue with `Ready` state,
     /// and reschedule to the next task on this run queue.
