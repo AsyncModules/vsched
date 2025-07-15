@@ -11,27 +11,16 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-default = []
-
-irq = []
-tls = []
-preempt = ["irq", "percpu?/preempt", "kernel_guard/preempt"]
-smp = []
 
 sched-fifo = []
-sched-rr = ["preempt"]
-sched-cfs = ["preempt"]
+sched-rr = []
+sched-cfs = []
 
 [dependencies]
 cfg-if = "1.0"
 log = "0.4"
 hal = { workspace = true }
 config = { workspace = true }
-percpu = { version = "0.2", optional = true }
-lazyinit = { version = "0.2", optional = true }
 memory_addr = { version = "0.4" }
-timer_list = { version = "0.1" }
-kernel_guard = { version = "0.1" }
-crate_interface = { version = "0.1" }
 scheduler = { workspace = true }
 crossbeam = { version = "0.8", default-features = false }

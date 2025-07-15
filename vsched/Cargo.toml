@@ -11,17 +11,9 @@ homepage.workspace = true
 crate-type = ["cdylib"]
 
 [features]
-default = ["multitask"]
-
-irq = []
-tls = []
-preempt = ["irq"]
-smp = []
-
-multitask = []
-sched-fifo = ["multitask"]
-sched-rr = ["multitask", "preempt"]
-sched-cfs = ["multitask", "preempt"]
+sched-fifo = []
+sched-rr = []
+sched-cfs = []
 
 [dependencies]
 cfg-if = "1.0"
