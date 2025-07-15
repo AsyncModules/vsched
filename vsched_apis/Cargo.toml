@@ -10,6 +10,13 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+
+[features]
+
+sched-fifo = []
+sched-rr = ["base_task/sched-rr"]
+sched-cfs = ["base_task/sched-cfs"]
+
 [dependencies]
 log = "0.4"
 base_task = { workspace = true }

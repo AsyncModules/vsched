@@ -33,6 +33,7 @@ cfg_if::cfg_if! {
 ///     section must be little than 0x1000.
 ///     The `#[inline(never)]` attribute and the
 ///     offset requirement can make it work ok.
+#[inline(never)]
 pub fn get_data_base() -> usize {
     let pc = unsafe { hal::asm::get_pc() };
     const VSCHED_DATA_SIZE: usize = config::SMP

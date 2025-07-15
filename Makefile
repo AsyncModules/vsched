@@ -9,6 +9,7 @@ LIB ?= libvsched
 RQ_CAP ?= 256
 UTEST ?= init_vsched
 UTEST_BIN ?= $(TARGET_DIR)/$(TARGET)/$(MODE)/$(UTEST)
+SCHED ?= sched-fifo
 
 OBJDUMP = rust-objdump -t -T -r -R -d --print-imm-hex --x86-asm-syntax=intel
 OBJCOPY = rust-objcopy -X -g
@@ -40,6 +41,7 @@ build_args := \
   -Z unstable-options \
   -Z build-std=core,compiler_builtins \
   -Z build-std-features=compiler-builtins-mem \
+  -F $(SCHED) \
   --target $(TARGET) \
   --target-dir $(TARGET_DIR) \
   $(build_args-$(MODE)) \
