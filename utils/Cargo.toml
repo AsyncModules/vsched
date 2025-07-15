@@ -11,3 +11,10 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "bench_deque"
+harness = false
