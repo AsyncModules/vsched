@@ -108,10 +108,12 @@ pub extern "C" fn task_tick(cpu_id: usize, task_ref: &BaseTaskRef) -> bool {
     get_run_queue(cpu_id).task_tick(task_ref)
 }
 
-/// put prev task
+/// migrate_entry
 #[unsafe(no_mangle)]
-pub extern "C" fn put_prev_task(cpu_id: usize, prev: BaseTaskRef, preempt: bool) {
-    get_run_queue(cpu_id).scheduler.put_prev_task(prev, preempt)
+pub extern "C" fn migrate_entry(migrated_task: BaseTaskRef) {
+    select_run_queue(&migrated_task)
+        .scheduler
+        .put_prev_task(migrated_task, false);
 }
 
 /// Current task gives up the CPU time voluntarily, and switches to another
