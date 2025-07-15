@@ -255,6 +255,11 @@ impl TaskInner {
     }
 
     #[inline]
+    pub fn need_resched(&self) -> bool {
+        self.need_resched.load(Ordering::Acquire)
+    }
+
+    #[inline]
     pub const unsafe fn ctx_mut_ptr(&self) -> *mut TaskContext {
         self.ctx.get()
     }
