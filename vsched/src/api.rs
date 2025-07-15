@@ -4,6 +4,7 @@ use crate::sched::select_run_queue_index;
 use crate::task::{TaskInner, TaskState};
 use crate::{percpu::PerCPU, sched::get_run_queue, select_run_queue};
 use config::RQ_CAP;
+use scheduler::BaseScheduler;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "sched-rr")] {
@@ -105,6 +106,12 @@ pub extern "C" fn set_priority(prio: isize, cpu_id: usize) -> bool {
 #[unsafe(no_mangle)]
 pub extern "C" fn task_tick(cpu_id: usize, task_ref: &BaseTaskRef) -> bool {
     get_run_queue(cpu_id).task_tick(task_ref)
+}
+
+/// put prev task
+#[unsafe(no_mangle)]
+pub extern "C" fn put_prev_task(cpu_id: usize, prev: BaseTaskRef, preempt: bool) {
+    get_run_queue(cpu_id).scheduler.put_prev_task(prev, preempt)
 }
 
 /// Current task gives up the CPU time voluntarily, and switches to another
