@@ -128,7 +128,9 @@ impl<T: Debug, const S: usize> Debug for RRTask<T, S> {
 
 impl<T: Debug, const S: usize> Debug for RRTaskRef<T, S> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("RRTaskRef").field("inner", self).finish()
+        f.debug_struct("RRTaskRef")
+            .field("inner", unsafe { self.inner.as_ref() })
+            .finish()
     }
 }
 

@@ -185,7 +185,9 @@ impl<T: Debug> Debug for CFSTask<T> {
 
 impl<T: Debug> Debug for CFSTaskRef<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("CFSTaskRef").field("inner", self).finish()
+        f.debug_struct("CFSTaskRef")
+            .field("inner", unsafe { self.inner.as_ref() })
+            .finish()
     }
 }
 
