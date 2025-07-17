@@ -52,7 +52,7 @@ all:
 ifeq ($(wildcard $(TARGET_DIR)),)
 	mkdir $(TARGET_DIR)
 endif
-	RQ_CAP=${RQ_CAP} cargo build $(build_args)
+	RQ_CAP=${RQ_CAP} RUSTFLAGS='-C link-arg=-fpie' cargo build $(build_args)
 	@$(OBJCOPY) $(OUPUT_SO) $(OUPUT_SO)
 	cp $(OUPUT_SO) $(LIB).so
 
