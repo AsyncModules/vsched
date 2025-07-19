@@ -137,11 +137,15 @@ impl<T: Debug, const S: usize> Debug for RRTaskRef<T, S> {
 #[repr(C)]
 pub struct WeakRRTaskRef<T, const S: usize> {
     inner: NonNull<RRTask<T, S>>,
+    drop_fn: Option<extern "C" fn(*const RRTask<T, S>)>,
 }
 
 impl<T, const S: usize> WeakRRTaskRef<T, S> {
-    pub fn new(inner: NonNull<RRTask<T, S>>) -> Self {
-        Self { inner }
+    pub fn new(inner: NonNull<RRTask<T, S>>, drop_fn: extern "C" fn(*const RRTask<T, S>)) -> Self {
+        Self {
+            inner,
+            drop_fn: Some(drop_fn),
+        }
     }
 }
 
@@ -149,6 +153,13 @@ impl<T, const S: usize> Deref for WeakRRTaskRef<T, S> {
     type Target = RRTask<T, S>;
     fn deref(&self) -> &Self::Target {
         unsafe { self.inner.as_ref() }
+    }
+}
+
+impl<T, const S: usize> Drop for WeakRRTaskRef<T, S> {
+    fn drop(&mut self) {
+        let ptr = self.inner.as_ptr();
+        (self.drop_fn.unwrap())(ptr);
     }
 }
 

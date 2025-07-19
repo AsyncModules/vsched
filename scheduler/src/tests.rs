@@ -2,7 +2,7 @@ macro_rules! def_test_sched {
     ($name: ident, $scheduler: ty, $task: ty, $task_ref: ty, $weak_task_ref: ty) => {
         mod $name {
             use crate::*;
-            use alloc::sync::Arc;
+            use alloc::sync::{Arc, Weak};
 
             pub extern "C" fn task_clone(raw_ptr: *const $task) {
                 unsafe { Arc::increment_strong_count(raw_ptr) };
@@ -18,10 +18,18 @@ macro_rules! def_test_sched {
                 count
             }
 
+            pub extern "C" fn task_drop_weak(raw_ptr: *const $task) {
+                let weak_task = unsafe { Weak::from_raw(raw_ptr) };
+                let _ = weak_task.upgrade().unwrap();
+            }
+
             pub extern "C" fn task_weak_clone(raw_ptr: *const $task) -> $weak_task_ref {
                 let _arc_task = unsafe { std::mem::ManuallyDrop::new(Arc::from_raw(raw_ptr)) };
                 let weak_task_ptr = Arc::downgrade(&_arc_task).into_raw() as _;
-                <$weak_task_ref>::new(core::ptr::NonNull::new(weak_task_ptr).unwrap())
+                <$weak_task_ref>::new(
+                    core::ptr::NonNull::new(weak_task_ptr).unwrap(),
+                    task_drop_weak,
+                )
             }
 
             #[test]

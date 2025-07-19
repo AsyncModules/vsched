@@ -57,7 +57,6 @@ impl<T> Clone for FiFoTaskRef<T> {
 impl<T> Drop for FiFoTaskRef<T> {
     fn drop(&mut self) {
         let ptr = self.inner.as_ptr();
-        // unsafe { core::arch::asm!("mv t0, {ptr}", "ebreak", ptr = in(reg )ptr as usize) }
         (self.drop_fn.unwrap())(ptr);
     }
 }
@@ -122,11 +121,15 @@ impl<T: Debug> Debug for FiFoTaskRef<T> {
 #[repr(C)]
 pub struct WeakFiFoTaskRef<T> {
     inner: NonNull<FifoTask<T>>,
+    drop_fn: Option<extern "C" fn(*const FifoTask<T>)>,
 }
 
 impl<T> WeakFiFoTaskRef<T> {
-    pub fn new(inner: NonNull<FifoTask<T>>) -> Self {
-        Self { inner }
+    pub fn new(inner: NonNull<FifoTask<T>>, drop_fn: extern "C" fn(*const FifoTask<T>)) -> Self {
+        Self {
+            inner,
+            drop_fn: Some(drop_fn),
+        }
     }
 }
 
@@ -134,6 +137,13 @@ impl<T> Deref for WeakFiFoTaskRef<T> {
     type Target = FifoTask<T>;
     fn deref(&self) -> &Self::Target {
         unsafe { self.inner.as_ref() }
+    }
+}
+
+impl<T> Drop for WeakFiFoTaskRef<T> {
+    fn drop(&mut self) {
+        let ptr = self.inner.as_ptr();
+        (self.drop_fn.unwrap())(ptr);
     }
 }
 

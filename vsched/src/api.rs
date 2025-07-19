@@ -43,12 +43,11 @@ pub fn get_data_base() -> usize {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn prev_task(cpu_id: usize) -> &'static WeakBaseTaskRef {
+pub extern "C" fn clear_prev_task_on_cpu(cpu_id: usize) {
     unsafe {
-        crate::get_run_queue(cpu_id)
-            .prev_task
-            .as_ref_unchecked()
-            .assume_init_ref()
+        let prev_task = crate::get_run_queue(cpu_id).prev_task.as_mut_unchecked();
+        prev_task.assume_init_ref().set_on_cpu(false);
+        prev_task.assume_init_drop();
     }
 }
 

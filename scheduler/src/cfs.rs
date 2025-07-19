@@ -194,11 +194,15 @@ impl<T: Debug> Debug for CFSTaskRef<T> {
 #[repr(C)]
 pub struct WeakCFSTaskRef<T> {
     inner: NonNull<CFSTask<T>>,
+    drop_fn: Option<extern "C" fn(*const CFSTask<T>)>,
 }
 
 impl<T> WeakCFSTaskRef<T> {
-    pub fn new(inner: NonNull<CFSTask<T>>) -> Self {
-        Self { inner }
+    pub fn new(inner: NonNull<CFSTask<T>>, drop_fn: extern "C" fn(*const CFSTask<T>)) -> Self {
+        Self {
+            inner,
+            drop_fn: Some(drop_fn),
+        }
     }
 }
 
@@ -206,6 +210,13 @@ impl<T> Deref for WeakCFSTaskRef<T> {
     type Target = CFSTask<T>;
     fn deref(&self) -> &Self::Target {
         unsafe { self.inner.as_ref() }
+    }
+}
+
+impl<T> Drop for WeakCFSTaskRef<T> {
+    fn drop(&mut self) {
+        let ptr = self.inner.as_ptr();
+        (self.drop_fn.unwrap())(ptr);
     }
 }
 

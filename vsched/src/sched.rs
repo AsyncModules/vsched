@@ -238,7 +238,9 @@ impl PerCPU {
 
             // Current it's **next_task** running on this CPU, clear the `prev_task`'s `on_cpu` field
             // to indicate that it has finished its scheduling process and no longer running on this CPU.
-            self.prev_task.as_ref_unchecked().assume_init_ref().set_on_cpu(false);
+            let prev_task = self.prev_task.as_mut_unchecked();
+            prev_task.assume_init_ref().set_on_cpu(false);
+            prev_task.assume_init_drop();
         }
     }
 
