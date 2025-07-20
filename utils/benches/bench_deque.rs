@@ -5,7 +5,7 @@ use std::{
     thread::spawn,
 };
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, SamplingMode, criterion_group, criterion_main};
 use utils::LockFreeDeque;
 
 fn test() {
@@ -172,20 +172,21 @@ fn mutex_de(data_num: usize, thread_num: usize) {
     }
 }
 
-pub fn criterion_benchmark(c: &mut Criterion) {
-    let mut group = c.benchmark_group("bench_deque_de");
+pub fn thread_num_benchmark(c: &mut Criterion) {
+    let mut group = c.benchmark_group("thread_num_bench_deque");
+    group.sampling_mode(SamplingMode::Flat);
     let data_num = 100;
     for thread_num in [4, 8, 16, 32, 64].iter() {
-        group.bench_with_input(
-            BenchmarkId::new("LockFreeDeque-DoubleEnded", thread_num),
-            thread_num,
-            |b, i| b.iter(|| lock_free_de(data_num, *i)),
-        );
-        group.bench_with_input(
-            BenchmarkId::new("Mutex+VecDeque-DoubleEnded", thread_num),
-            thread_num,
-            |b, i| b.iter(|| mutex_de(data_num, *i)),
-        );
+        // group.bench_with_input(
+        //     BenchmarkId::new("LockFreeDeque-DoubleEnded", thread_num),
+        //     thread_num,
+        //     |b, i| b.iter(|| lock_free_de(data_num, *i)),
+        // );
+        // group.bench_with_input(
+        //     BenchmarkId::new("Mutex+VecDeque-DoubleEnded", thread_num),
+        //     thread_num,
+        //     |b, i| b.iter(|| mutex_de(data_num, *i)),
+        // );
         group.bench_with_input(
             BenchmarkId::new("LockFreeDeque-SingleEnded", thread_num),
             thread_num,
@@ -199,5 +200,66 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, criterion_benchmark);
+pub fn data_num_benchmark_32(c: &mut Criterion) {
+    let mut group = c.benchmark_group("data_num_bench_deque_32");
+    group.sampling_mode(SamplingMode::Flat);
+    let thread_num = 32;
+    for data_num in [50, 100, 200, 300, 400, 500].iter() {
+        // group.bench_with_input(
+        //     BenchmarkId::new("LockFreeDeque-DoubleEnded", thread_num),
+        //     data_num,
+        //     |b, i| b.iter(|| lock_free_de(*i, thread_num)),
+        // );
+        // group.bench_with_input(
+        //     BenchmarkId::new("Mutex+VecDeque-DoubleEnded", thread_num),
+        //     data_num,
+        //     |b, i| b.iter(|| mutex_de(*i, thread_num)),
+        // );
+        group.bench_with_input(
+            BenchmarkId::new("LockFreeDeque-SingleEnded", data_num),
+            data_num,
+            |b, i| b.iter(|| lock_free_se(*i, thread_num)),
+        );
+        group.bench_with_input(
+            BenchmarkId::new("Mutex+VecDeque-SingleEnded", data_num),
+            data_num,
+            |b, i| b.iter(|| mutex_se(*i, thread_num)),
+        );
+    }
+}
+
+pub fn data_num_benchmark_16(c: &mut Criterion) {
+    let mut group = c.benchmark_group("data_num_bench_deque_16");
+    group.sampling_mode(SamplingMode::Flat);
+    let thread_num = 16;
+    for data_num in [50, 100, 200, 300, 400, 500].iter() {
+        // group.bench_with_input(
+        //     BenchmarkId::new("LockFreeDeque-DoubleEnded", thread_num),
+        //     data_num,
+        //     |b, i| b.iter(|| lock_free_de(*i, thread_num)),
+        // );
+        // group.bench_with_input(
+        //     BenchmarkId::new("Mutex+VecDeque-DoubleEnded", thread_num),
+        //     data_num,
+        //     |b, i| b.iter(|| mutex_de(*i, thread_num)),
+        // );
+        group.bench_with_input(
+            BenchmarkId::new("LockFreeDeque-SingleEnded", data_num),
+            data_num,
+            |b, i| b.iter(|| lock_free_se(*i, thread_num)),
+        );
+        group.bench_with_input(
+            BenchmarkId::new("Mutex+VecDeque-SingleEnded", data_num),
+            data_num,
+            |b, i| b.iter(|| mutex_se(*i, thread_num)),
+        );
+    }
+}
+
+criterion_group!(
+    benches,
+    thread_num_benchmark,
+    data_num_benchmark_32,
+    data_num_benchmark_16
+);
 criterion_main!(benches);
