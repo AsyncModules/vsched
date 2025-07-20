@@ -282,7 +282,7 @@ impl PerCPU {
 
             // Directly change the `CurrentTask` and return `Pending`.
             // CurrentTask::set_current(prev_task, next_task);
-            *self.current_task.as_mut_unchecked() = next_task;
+            self.current_task.replace(next_task);
             true
         }
     }
