@@ -60,8 +60,9 @@ pub(crate) fn select_run_queue_index(cpumask: AxCpuMask) -> usize {
 ///
 #[inline]
 pub fn get_run_queue(index: usize) -> &'static PerCPU {
-    let per_cpu_base = crate::get_data_base() as *mut PerCPU;
-    let per_cpu = unsafe { &*per_cpu_base.add(index) };
+    let per_cpu_base = crate::get_data_base() as *mut u8;
+    let per_cpu = unsafe { &*(per_cpu_base.add(index * ((core::mem::size_of::<crate::percpu::PerCPU>() + config::PAGES_SIZE_4K - 1)
+            & (!(config::PAGES_SIZE_4K - 1)))) as *mut PerCPU) };
     per_cpu
 }
 
@@ -185,6 +186,18 @@ impl PerCPU {
         assert!(curr.is_running());
 
         self.put_task_with_state(curr.clone(), TaskState::Running, false);
+
+        self.resched();
+    }
+
+    /// Yield the current task and reschedule.
+    /// This function will put the current task into this run queue with `Ready` state,
+    /// and reschedule to the next task on this run queue.
+    pub fn preempt_current(&self) {
+        let curr = unsafe { self.current_task.as_ref_unchecked() };
+        assert!(curr.is_running());
+
+        self.put_task_with_state(curr.clone(), TaskState::Running, true);
 
         self.resched();
     }

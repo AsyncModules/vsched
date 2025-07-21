@@ -34,6 +34,7 @@ cfg_if::cfg_if! {
 ///     The `#[inline(never)]` attribute and the
 ///     offset requirement can make it work ok.
 #[inline(never)]
+#[unsafe(link_section = ".text.start")]
 pub fn get_data_base() -> usize {
     let pc = unsafe { hal::asm::get_pc() };
     const VSCHED_DATA_SIZE: usize = config::SMP
@@ -69,9 +70,13 @@ pub extern "C" fn current(cpu_id: usize) -> BaseTaskRef {
 /// Initializes the task scheduler (for the primary CPU).
 #[unsafe(no_mangle)]
 pub extern "C" fn init_vsched(cpu_id: usize, idle_task: BaseTaskRef, boot_task: BaseTaskRef) {
-    let per_cpu_base = get_data_base() as *mut MaybeUninit<PerCPU>;
+    let per_cpu_base = get_data_base() as *mut u8;
     unsafe {
-        let per_cpu = per_cpu_base.add(cpu_id);
+        let per_cpu = per_cpu_base.add(
+            cpu_id
+                * ((core::mem::size_of::<crate::percpu::PerCPU>() + config::PAGES_SIZE_4K - 1)
+                    & (!(config::PAGES_SIZE_4K - 1))),
+        ) as *mut MaybeUninit<PerCPU>;
         *per_cpu = MaybeUninit::new(PerCPU::new(cpu_id, idle_task, boot_task));
     }
 }
@@ -121,6 +126,12 @@ pub extern "C" fn migrate_entry(migrated_task: BaseTaskRef) {
 #[unsafe(no_mangle)]
 pub extern "C" fn yield_now(cpu_id: usize) {
     get_run_queue(cpu_id).yield_current()
+}
+
+/// Preempt the current task
+#[unsafe(no_mangle)]
+pub extern "C" fn preempt_current(cpu_id: usize) {
+    get_run_queue(cpu_id).preempt_current()
 }
 
 #[unsafe(no_mangle)]
