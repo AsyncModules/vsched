@@ -19,7 +19,7 @@ sched-cfs = ["base_task/sched-cfs"]
 
 [dependencies]
 log = "0.4"
-base_task = { workspace = true }
+base_task = { workspace = true, features = ["alloc"] }
 xmas-elf = "0.9.0"
 
 [build-dependencies]

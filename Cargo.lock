@@ -45,6 +45,8 @@ dependencies = [
  "config",
  "crossbeam",
  "hal",
+ "kernel_guard",
+ "kspin",
  "log",
  "memory_addr 0.4.0",
  "scheduler",
@@ -101,6 +103,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe4266f1bd910c087ff8c7848882217b2b079742877b21d29614c11c16087d70"
 dependencies = [
  "bitmaps",
+]
+
+[[package]]
+name = "crate_interface"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70272a03a2cef15589bac05d3d15c023752f5f8f2da8be977d983a9d9e6250fb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -178,6 +191,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "kernel_guard"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "307e6be468f3d6b6d895e191f63c11602e4e76575ecca68325d8c8dbebe2870e"
+dependencies = [
+ "cfg-if",
+ "crate_interface",
+]
+
+[[package]]
+name = "kspin"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51954c939251c5899b6e953aa0ed8903c5c0d1140fc7ce3a8fd60c931d694f6e"
+dependencies = [
+ "cfg-if",
+ "kernel_guard",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.174"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -217,9 +250,9 @@ checksum = "32a282da65faaf38286cf3be983213fcf1d2e2a58700e808f83f4ea9a4804bc0"
 
 [[package]]
 name = "memmap2"
-version = "0.9.5"
+version = "0.9.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd3f7eed9d3848f8b98834af67102b720745c4ec028fcd0aa0239277e7de374f"
+checksum = "483758ad303d734cec05e5c12b41d7e93e6a6390c5e9dae6bdeb7c1259012d28"
 dependencies = [
  "libc",
 ]
@@ -366,6 +399,8 @@ checksum = "8a0d197bd2c9dc6e53b84da9556a69ba4cdfab8619eb41a8bd1cc2027a0f6b1d"
 name = "scheduler"
 version = "0.2.1"
 dependencies = [
+ "cfg-if",
+ "config",
  "crossbeam",
  "heapless",
  "utils",
@@ -442,13 +477,9 @@ checksum = "442887c63f2c839b346c192d047a7c87e73d0689c9157b00b53dcc27dd5ea793"
 name = "vsched"
 version = "0.0.0"
 dependencies = [
- "cfg-if",
+ "base_task",
  "config",
- "cpumask",
- "crossbeam",
  "hal",
- "memory_addr 0.4.0",
- "scheduler",
 ]
 
 [[package]]

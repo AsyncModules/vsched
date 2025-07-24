@@ -12,9 +12,14 @@ categories.workspace = true
 
 [features]
 
-sched-fifo = []
-sched-rr = []
-sched-cfs = []
+sched-fifo = ["scheduler/sched-fifo"]
+sched-rr = ["scheduler/sched-rr"]
+sched-cfs = ["scheduler/sched-cfs"]
+irq = []
+preempt = []
+smp = []
+alloc = ["scheduler/alloc", "crossbeam", "kspin", "kernel_guard"]
+tls = []
 
 [dependencies]
 cfg-if = "1.0"
@@ -23,4 +28,8 @@ hal = { workspace = true }
 config = { workspace = true }
 memory_addr = { version = "0.4" }
 scheduler = { workspace = true }
-crossbeam = { version = "0.8", default-features = false }
+crossbeam = { version = "0.8", default-features = false, optional = true }
+
+
+kspin = { version = "0.1", optional = true }
+kernel_guard = { version = "0.1", optional = true }

@@ -1,55 +1,11 @@
 use core::mem::MaybeUninit;
 
-use crate::sched::select_run_queue_index;
-use crate::task::{TaskInner, TaskState};
-use crate::{percpu::PerCPU, sched::get_run_queue, select_run_queue};
-use config::RQ_CAP;
-use scheduler::BaseScheduler;
-
-cfg_if::cfg_if! {
-    if #[cfg(feature = "sched-rr")] {
-        const MAX_TIME_SLICE: usize = 5;
-        pub type BaseTask = scheduler::RRTask<TaskInner, MAX_TIME_SLICE>;
-        pub type BaseTaskRef = scheduler::RRTaskRef<TaskInner, MAX_TIME_SLICE>;
-        pub type WeakBaseTaskRef = scheduler::WeakRRTaskRef<TaskInner, MAX_TIME_SLICE>;
-
-        pub type Scheduler = scheduler::RRScheduler<TaskInner, MAX_TIME_SLICE, RQ_CAP>;
-    } else if #[cfg(feature = "sched-cfs")] {
-        pub type BaseTask = scheduler::CFSTask<TaskInner>;
-        pub type BaseTaskRef = scheduler::CFSTaskRef<TaskInner>;
-        pub type WeakBaseTaskRef = scheduler::WeakCFSTaskRef<TaskInner>;
-        pub type Scheduler = scheduler::CFScheduler<TaskInner, RQ_CAP>;
-    } else {
-        // If no scheduler features are set, use FIFO as the default.
-        pub type BaseTask = scheduler::FifoTask<TaskInner>;
-        pub type BaseTaskRef = scheduler::FiFoTaskRef<TaskInner>;
-        pub type WeakBaseTaskRef = scheduler::WeakFiFoTaskRef<TaskInner>;
-        pub type Scheduler = scheduler::FifoScheduler<TaskInner, RQ_CAP>;
-    }
-}
-
-/// Safety:
-///     the offset of this function in the `.text`
-///     section must be little than 0x1000.
-///     The `#[inline(never)]` attribute and the
-///     offset requirement can make it work ok.
-#[inline(never)]
-#[unsafe(link_section = ".text.start")]
-pub fn get_data_base() -> usize {
-    let pc = unsafe { hal::asm::get_pc() };
-    const VSCHED_DATA_SIZE: usize = config::SMP
-        * ((core::mem::size_of::<crate::percpu::PerCPU>() + config::PAGES_SIZE_4K - 1)
-            & (!(config::PAGES_SIZE_4K - 1)));
-    (pc & config::DATA_SEC_MASK) - VSCHED_DATA_SIZE
-}
+use crate::sched::{get_data_base, get_run_queue};
+use base_task::{BaseScheduler, PerCPU, TaskRef, TaskState, percpu_size_4k_aligned};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn clear_prev_task_on_cpu(cpu_id: usize) {
-    unsafe {
-        let prev_task = crate::get_run_queue(cpu_id).prev_task.as_mut_unchecked();
-        prev_task.assume_init_ref().set_on_cpu(false);
-        prev_task.assume_init_drop();
-    }
+    crate::sched::clear_prev_task_on_cpu(get_run_queue(cpu_id));
 }
 
 /// Gets the current task.
@@ -58,9 +14,9 @@ pub extern "C" fn clear_prev_task_on_cpu(cpu_id: usize) {
 ///
 /// Panics if the current task is not initialized.
 #[unsafe(no_mangle)]
-pub extern "C" fn current(cpu_id: usize) -> BaseTaskRef {
+pub extern "C" fn current(cpu_id: usize) -> TaskRef {
     unsafe {
-        crate::get_run_queue(cpu_id)
+        get_run_queue(cpu_id)
             .current_task
             .as_ref_unchecked()
             .clone()
@@ -69,14 +25,11 @@ pub extern "C" fn current(cpu_id: usize) -> BaseTaskRef {
 
 /// Initializes the task scheduler (for the primary CPU).
 #[unsafe(no_mangle)]
-pub extern "C" fn init_vsched(cpu_id: usize, idle_task: BaseTaskRef, boot_task: BaseTaskRef) {
+pub extern "C" fn init_vsched(cpu_id: usize, idle_task: TaskRef, boot_task: TaskRef) {
     let per_cpu_base = get_data_base() as *mut u8;
     unsafe {
-        let per_cpu = per_cpu_base.add(
-            cpu_id
-                * ((core::mem::size_of::<crate::percpu::PerCPU>() + config::PAGES_SIZE_4K - 1)
-                    & (!(config::PAGES_SIZE_4K - 1))),
-        ) as *mut MaybeUninit<PerCPU>;
+        let per_cpu = per_cpu_base.add(cpu_id * percpu_size_4k_aligned::<base_task::TaskInner>())
+            as *mut MaybeUninit<PerCPU>;
         *per_cpu = MaybeUninit::new(PerCPU::new(cpu_id, idle_task, boot_task));
     }
 }
@@ -88,9 +41,8 @@ pub extern "C" fn init_vsched(cpu_id: usize, idle_task: BaseTaskRef, boot_task: 
 ///
 /// Returns the task reference.
 #[unsafe(no_mangle)]
-pub extern "C" fn spawn(task_ref: BaseTaskRef) -> BaseTaskRef {
-    select_run_queue(&task_ref).add_task(task_ref.clone());
-    task_ref
+pub extern "C" fn spawn(cpu_id: usize, task_ref: TaskRef) {
+    crate::sched::add_task(get_run_queue(cpu_id), task_ref);
 }
 
 /// Set the priority for current task.
@@ -104,19 +56,19 @@ pub extern "C" fn spawn(task_ref: BaseTaskRef) -> BaseTaskRef {
 /// [CFS]: https://en.wikipedia.org/wiki/Completely_Fair_Scheduler
 #[unsafe(no_mangle)]
 pub extern "C" fn set_priority(prio: isize, cpu_id: usize) -> bool {
-    get_run_queue(cpu_id).set_current_priority(prio)
+    crate::sched::set_current_priority(get_run_queue(cpu_id), prio)
 }
 
 /// task tick
 #[unsafe(no_mangle)]
-pub extern "C" fn task_tick(cpu_id: usize, task_ref: &BaseTaskRef) -> bool {
-    get_run_queue(cpu_id).task_tick(task_ref)
+pub extern "C" fn task_tick(cpu_id: usize, task_ref: &TaskRef) -> bool {
+    crate::sched::task_tick(get_run_queue(cpu_id), task_ref)
 }
 
 /// migrate_entry
 #[unsafe(no_mangle)]
-pub extern "C" fn migrate_entry(migrated_task: BaseTaskRef) {
-    select_run_queue(&migrated_task)
+pub extern "C" fn migrate_entry(cpu_id: usize, migrated_task: TaskRef) {
+    get_run_queue(cpu_id)
         .scheduler
         .put_prev_task(migrated_task, false);
 }
@@ -125,35 +77,35 @@ pub extern "C" fn migrate_entry(migrated_task: BaseTaskRef) {
 /// ready task.
 #[unsafe(no_mangle)]
 pub extern "C" fn yield_now(cpu_id: usize) {
-    get_run_queue(cpu_id).yield_current()
+    crate::sched::yield_current(get_run_queue(cpu_id));
 }
 
 /// Preempt the current task
 #[unsafe(no_mangle)]
 pub extern "C" fn preempt_current(cpu_id: usize) {
-    get_run_queue(cpu_id).preempt_current()
+    crate::sched::preempt_current(get_run_queue(cpu_id));
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn resched(cpu_id: usize) {
-    get_run_queue(cpu_id).resched()
+    crate::sched::resched(get_run_queue(cpu_id));
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn switch_to(cpu_id: usize, prev_task: &BaseTaskRef, next_task: BaseTaskRef) {
-    get_run_queue(cpu_id).switch_to(prev_task, next_task)
+pub extern "C" fn switch_to(cpu_id: usize, prev_task: &TaskRef, next_task: TaskRef) {
+    crate::sched::switch_to(get_run_queue(cpu_id), prev_task, next_task);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn resched_f(cpu_id: usize) -> bool {
-    get_run_queue(cpu_id).resched_f()
+    crate::sched::resched_f(get_run_queue(cpu_id))
 }
 
 /// Wake up a task to the distination cpu,
+#[rustfmt::skip]
 #[unsafe(no_mangle)]
-pub extern "C" fn unblock_task(task: BaseTaskRef, resched: bool, src_cpu_id: usize) {
-    let dst_cpu_id = select_run_queue_index(task.cpumask());
-    get_run_queue(dst_cpu_id).unblock_task(task, resched, src_cpu_id);
+pub extern "C" fn unblock_task(task: TaskRef, resched: bool, dst_cpu_id: usize, src_cpu_id: usize) {
+    crate::sched::unblock_task(get_run_queue(dst_cpu_id), task, resched, src_cpu_id);
 }
 
 /// yield future
@@ -162,6 +114,6 @@ pub extern "C" fn yield_f(cpu_id: usize) -> bool {
     let per_cpu = get_run_queue(cpu_id);
     let curr = unsafe { per_cpu.current_task.as_ref_unchecked() };
     assert!(curr.is_running());
-    per_cpu.put_task_with_state(curr.clone(), TaskState::Running, false);
-    per_cpu.resched_f()
+    crate::sched::put_task_with_state(per_cpu, curr.clone(), TaskState::Running, false);
+    crate::sched::resched_f(per_cpu)
 }

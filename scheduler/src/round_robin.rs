@@ -4,13 +4,16 @@ use core::ops::Deref;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicIsize, Ordering};
 use utils::LockFreeDeque;
+#[cfg(feature = "alloc")]
+use {alloc::sync::Arc, core::mem::ManuallyDrop};
 
 /// A task wrapper for the [`RRScheduler`].
 ///
 /// It add a time slice counter to use in round-robin scheduling.
+#[repr(C)]
 pub struct RRTask<T, const MAX_TIME_SLICE: usize> {
-    inner: T,
     time_slice: AtomicIsize,
+    inner: T,
 }
 
 impl<T, const S: usize> RRTask<T, S> {
@@ -44,53 +47,24 @@ impl<T, const S: usize> Deref for RRTask<T, S> {
     }
 }
 
-#[repr(C)]
+#[repr(transparent)]
 pub struct RRTaskRef<T, const S: usize> {
     inner: NonNull<RRTask<T, S>>,
-    clone_fn: Option<extern "C" fn(*const RRTask<T, S>)>,
-    weak_clone_fn: Option<extern "C" fn(*const RRTask<T, S>) -> WeakRRTaskRef<T, S>>,
-    drop_fn: Option<extern "C" fn(*const RRTask<T, S>)>,
-    strong_count_fn: Option<extern "C" fn(*const RRTask<T, S>) -> usize>,
+}
+
+impl<T, const S: usize> Clone for RRTaskRef<T, S> {
+    fn clone(&self) -> Self {
+        Self::new(self.inner.as_ptr())
+    }
 }
 
 unsafe impl<T, const S: usize> Send for RRTaskRef<T, S> {}
 unsafe impl<T, const S: usize> Sync for RRTaskRef<T, S> {}
 
-impl<T, const S: usize> Clone for RRTaskRef<T, S> {
-    fn clone(&self) -> Self {
-        let ptr = self.inner.as_ptr();
-        (self.clone_fn.unwrap())(ptr);
-        Self {
-            inner: self.inner.clone(),
-            clone_fn: self.clone_fn.clone(),
-            weak_clone_fn: self.weak_clone_fn.clone(),
-            drop_fn: self.drop_fn.clone(),
-            strong_count_fn: self.strong_count_fn.clone(),
-        }
-    }
-}
-
-impl<T, const S: usize> Drop for RRTaskRef<T, S> {
-    fn drop(&mut self) {
-        let ptr = self.inner.as_ptr();
-        (self.drop_fn.unwrap())(ptr);
-    }
-}
-
 impl<T, const S: usize> RRTaskRef<T, S> {
-    pub fn new(
-        inner: NonNull<RRTask<T, S>>,
-        clone_fn: extern "C" fn(*const RRTask<T, S>),
-        weak_clone_fn: extern "C" fn(*const RRTask<T, S>) -> WeakRRTaskRef<T, S>,
-        drop_fn: extern "C" fn(*const RRTask<T, S>),
-        strong_count_fn: extern "C" fn(*const RRTask<T, S>) -> usize,
-    ) -> Self {
+    pub fn new(inner: *const RRTask<T, S>) -> Self {
         Self {
-            inner,
-            clone_fn: Some(clone_fn),
-            weak_clone_fn: Some(weak_clone_fn),
-            drop_fn: Some(drop_fn),
-            strong_count_fn: Some(strong_count_fn),
+            inner: NonNull::new(inner as _).unwrap(),
         }
     }
 
@@ -98,16 +72,13 @@ impl<T, const S: usize> RRTaskRef<T, S> {
         self.inner.as_ptr() == other.inner.as_ptr()
     }
 
-    pub fn strong_count(&self) -> usize {
-        (self.strong_count_fn.unwrap())(self.inner.as_ptr())
-    }
-
-    pub fn weak_clone(&self) -> WeakRRTaskRef<T, S> {
-        (self.weak_clone_fn.unwrap())(self.inner.as_ptr())
-    }
-
     pub fn is_empty(&self) -> bool {
         self.inner == NonNull::dangling()
+    }
+
+    #[cfg(feature = "alloc")]
+    pub fn into_arc(&self) -> ManuallyDrop<Arc<RRTask<T, S>>> {
+        unsafe { ManuallyDrop::new(Arc::from_raw(self.inner.as_ptr() as _)) }
     }
 }
 
@@ -129,37 +100,8 @@ impl<T: Debug, const S: usize> Debug for RRTask<T, S> {
 impl<T: Debug, const S: usize> Debug for RRTaskRef<T, S> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("RRTaskRef")
-            .field("inner", unsafe { self.inner.as_ref() })
+            .field("RRTask", unsafe { self.inner.as_ref() })
             .finish()
-    }
-}
-
-#[repr(C)]
-pub struct WeakRRTaskRef<T, const S: usize> {
-    inner: NonNull<RRTask<T, S>>,
-    drop_fn: Option<extern "C" fn(*const RRTask<T, S>)>,
-}
-
-impl<T, const S: usize> WeakRRTaskRef<T, S> {
-    pub fn new(inner: NonNull<RRTask<T, S>>, drop_fn: extern "C" fn(*const RRTask<T, S>)) -> Self {
-        Self {
-            inner,
-            drop_fn: Some(drop_fn),
-        }
-    }
-}
-
-impl<T, const S: usize> Deref for WeakRRTaskRef<T, S> {
-    type Target = RRTask<T, S>;
-    fn deref(&self) -> &Self::Target {
-        unsafe { self.inner.as_ref() }
-    }
-}
-
-impl<T, const S: usize> Drop for WeakRRTaskRef<T, S> {
-    fn drop(&mut self) {
-        let ptr = self.inner.as_ptr();
-        (self.drop_fn.unwrap())(ptr);
     }
 }
 

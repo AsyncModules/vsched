@@ -6,14 +6,17 @@ use core::ops::Deref;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicIsize, Ordering};
 use utils::LockFreeBTreeMap;
+#[cfg(feature = "alloc")]
+use {alloc::sync::Arc, core::mem::ManuallyDrop};
 
 /// task for CFS
+#[repr(C)]
 pub struct CFSTask<T> {
-    inner: T,
     init_vruntime: AtomicIsize,
     delta: AtomicIsize,
     nice: AtomicIsize,
     id: AtomicIsize,
+    inner: T,
 }
 
 // https://elixir.bootlin.com/linux/latest/source/include/linux/sched/prio.h
@@ -101,53 +104,24 @@ impl<T> Deref for CFSTask<T> {
     }
 }
 
-#[repr(C)]
+#[repr(transparent)]
 pub struct CFSTaskRef<T> {
     inner: NonNull<CFSTask<T>>,
-    clone_fn: Option<extern "C" fn(*const CFSTask<T>)>,
-    weak_clone_fn: Option<extern "C" fn(*const CFSTask<T>) -> WeakCFSTaskRef<T>>,
-    drop_fn: Option<extern "C" fn(*const CFSTask<T>)>,
-    strong_count_fn: Option<extern "C" fn(*const CFSTask<T>) -> usize>,
+}
+
+impl<T> Clone for CFSTaskRef<T> {
+    fn clone(&self) -> Self {
+        Self::new(self.inner.as_ptr())
+    }
 }
 
 unsafe impl<T> Send for CFSTaskRef<T> {}
 unsafe impl<T> Sync for CFSTaskRef<T> {}
 
-impl<T> Clone for CFSTaskRef<T> {
-    fn clone(&self) -> Self {
-        let ptr = self.inner.as_ptr();
-        (self.clone_fn.unwrap())(ptr);
-        Self {
-            inner: self.inner.clone(),
-            clone_fn: self.clone_fn.clone(),
-            weak_clone_fn: self.weak_clone_fn.clone(),
-            drop_fn: self.drop_fn.clone(),
-            strong_count_fn: self.strong_count_fn.clone(),
-        }
-    }
-}
-
-impl<T> Drop for CFSTaskRef<T> {
-    fn drop(&mut self) {
-        let ptr = self.inner.as_ptr();
-        (self.drop_fn.unwrap())(ptr);
-    }
-}
-
 impl<T> CFSTaskRef<T> {
-    pub fn new(
-        inner: NonNull<CFSTask<T>>,
-        clone_fn: extern "C" fn(*const CFSTask<T>),
-        weak_clone_fn: extern "C" fn(*const CFSTask<T>) -> WeakCFSTaskRef<T>,
-        drop_fn: extern "C" fn(*const CFSTask<T>),
-        strong_count_fn: extern "C" fn(*const CFSTask<T>) -> usize,
-    ) -> Self {
+    pub fn new(inner: *const CFSTask<T>) -> Self {
         Self {
-            inner,
-            clone_fn: Some(clone_fn),
-            weak_clone_fn: Some(weak_clone_fn),
-            drop_fn: Some(drop_fn),
-            strong_count_fn: Some(strong_count_fn),
+            inner: NonNull::new(inner as _).unwrap(),
         }
     }
 
@@ -155,16 +129,13 @@ impl<T> CFSTaskRef<T> {
         self.inner.as_ptr() == other.inner.as_ptr()
     }
 
-    pub fn strong_count(&self) -> usize {
-        (self.strong_count_fn.unwrap())(self.inner.as_ptr())
-    }
-
-    pub fn weak_clone(&self) -> WeakCFSTaskRef<T> {
-        (self.weak_clone_fn.unwrap())(self.inner.as_ptr())
-    }
-
     pub fn is_empty(&self) -> bool {
         self.inner == NonNull::dangling()
+    }
+
+    #[cfg(feature = "alloc")]
+    pub fn into_arc(&self) -> ManuallyDrop<Arc<CFSTask<T>>> {
+        unsafe { ManuallyDrop::new(Arc::from_raw(self.inner.as_ptr() as _)) }
     }
 }
 
@@ -186,37 +157,8 @@ impl<T: Debug> Debug for CFSTask<T> {
 impl<T: Debug> Debug for CFSTaskRef<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CFSTaskRef")
-            .field("inner", unsafe { self.inner.as_ref() })
+            .field("CFSTask", unsafe { self.inner.as_ref() })
             .finish()
-    }
-}
-
-#[repr(C)]
-pub struct WeakCFSTaskRef<T> {
-    inner: NonNull<CFSTask<T>>,
-    drop_fn: Option<extern "C" fn(*const CFSTask<T>)>,
-}
-
-impl<T> WeakCFSTaskRef<T> {
-    pub fn new(inner: NonNull<CFSTask<T>>, drop_fn: extern "C" fn(*const CFSTask<T>)) -> Self {
-        Self {
-            inner,
-            drop_fn: Some(drop_fn),
-        }
-    }
-}
-
-impl<T> Deref for WeakCFSTaskRef<T> {
-    type Target = CFSTask<T>;
-    fn deref(&self) -> &Self::Target {
-        unsafe { self.inner.as_ref() }
-    }
-}
-
-impl<T> Drop for WeakCFSTaskRef<T> {
-    fn drop(&mut self) {
-        let ptr = self.inner.as_ptr();
-        (self.drop_fn.unwrap())(ptr);
     }
 }
 

@@ -11,15 +11,12 @@ homepage.workspace = true
 crate-type = ["cdylib"]
 
 [features]
-sched-fifo = []
-sched-rr = []
-sched-cfs = []
+
+sched-fifo = ["base_task/sched-fifo"]
+sched-rr = ["base_task/sched-rr"]
+sched-cfs = ["base_task/sched-cfs"]
 
 [dependencies]
-cfg-if = "1.0"
 hal = { workspace = true }
-scheduler = { workspace = true }
 config = { workspace = true }
-cpumask = "0.1"
-memory_addr = "0.4"
-crossbeam = { version = "0.8", default-features = false }
+base_task = { workspace = true }

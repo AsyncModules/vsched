@@ -3,7 +3,7 @@ use std::path::Path;
 fn main() {
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let out_path = Path::new(&out_dir).join("linker.lds");
-    let arch = option_env!("ARCH").unwrap();
+    let arch = option_env!("ARCH").unwrap_or("riscv64");
     let arch_lds = match arch {
         "riscv64" => "riscv",
         "aarch64" => "aarch64",

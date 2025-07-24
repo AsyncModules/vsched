@@ -9,19 +9,34 @@
 #![cfg_attr(not(test), no_std)]
 #![feature(unsafe_cell_access)]
 
-mod cfs;
-mod fifo;
-mod round_robin;
+use config::RQ_CAP;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "alloc"))]
 extern crate alloc;
 
-#[cfg(test)]
-mod tests;
+mod percpu;
+pub use percpu::*;
 
-pub use cfs::{CFSTask, CFSTaskRef, CFScheduler, WeakCFSTaskRef};
-pub use fifo::{FiFoTaskRef, FifoScheduler, FifoTask, WeakFiFoTaskRef};
-pub use round_robin::{RRScheduler, RRTask, RRTaskRef, WeakRRTaskRef};
+cfg_if::cfg_if! {
+    if #[cfg(feature = "sched-rr")] {
+        mod round_robin;
+        const MAX_TIME_SLICE: usize = 5;
+        pub type BaseTask<T> = round_robin::RRTask<T, MAX_TIME_SLICE>;
+        pub type BaseTaskRef<T> = round_robin::RRTaskRef<T, MAX_TIME_SLICE>;
+        pub type Scheduler<T> = round_robin::RRScheduler<T, MAX_TIME_SLICE, RQ_CAP>;
+    } else if #[cfg(feature = "sched-cfs")] {
+        mod cfs;
+        pub type BaseTask<T> = cfs::CFSTask<T>;
+        pub type BaseTaskRef<T> = cfs::CFSTaskRef<T>;
+        pub type Scheduler<T> = cfs::CFScheduler<T, RQ_CAP>;
+    } else {
+        mod fifo;
+        // If no scheduler features are set, use FIFO as the default.
+        pub type BaseTask<T> = fifo::FifoTask<T>;
+        pub type BaseTaskRef<T> = fifo::FiFoTaskRef<T>;
+        pub type Scheduler<T> = fifo::FifoScheduler<T, RQ_CAP>;
+    }
+}
 
 /// The base scheduler trait that all schedulers should implement.
 ///
